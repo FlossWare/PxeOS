@@ -9,6 +9,11 @@ from pxeos.config import PxeOSConfig, load_profile
 from pxeos.matcher import HostMatcher
 from pxeos.models import BootAssets, HostRule, ProvisionProfile
 from pxeos.registry import PluginRegistry
+from pxeos.state import ProvisionState, ProvisionTracker
+
+# iPXE script returned when netboot is disabled (boot-once complete).
+# ``exit`` tells iPXE to fall through to the next boot device (local disk).
+LOCAL_BOOT_SCRIPT = "#!ipxe\nexit\n"
 
 
 class ProvisioningEngine:
@@ -18,10 +23,12 @@ class ProvisioningEngine:
         registry: PluginRegistry,
         matcher: HostMatcher,
         config: PxeOSConfig,
+        tracker: Optional[ProvisionTracker] = None,
     ) -> None:
         self._registry = registry
         self._matcher = matcher
         self._config = config
+        self.tracker = tracker or ProvisionTracker()
 
     def provision(
         self,
@@ -48,10 +55,25 @@ class ProvisioningEngine:
         return plugin.boot_assets(profile)
 
     def render_ipxe_script(self, mac: str) -> str:
+        # Boot-once check: if netboot has been disabled for this MAC,
+        # return a local-boot script so the machine boots from disk.
+        if not self.tracker.is_netboot_enabled(mac):
+            return LOCAL_BOOT_SCRIPT
+
         rule = self._resolve_rule(mac)
         profile = self._load_profile_for_rule(rule)
         plugin = self._registry.get(rule.os_family)
         assets = plugin.boot_assets(profile)
+
+        # Register if not tracked, then transition to BOOTING
+        if self.tracker.get(mac) is None:
+            self.tracker.register(
+                mac=mac,
+                profile=rule.profile,
+                os_family=rule.os_family,
+                os_version=rule.os_version,
+            )
+        self.tracker.transition(mac, ProvisionState.BOOTING)
 
         base_url = self._base_url()
         autoinstall_url = (
@@ -77,6 +99,17 @@ class ProvisioningEngine:
         rule = self._resolve_rule(mac)
         profile = self._load_profile_for_rule(rule)
         plugin = self._registry.get(rule.os_family)
+
+        # Register if not tracked, then transition to INSTALLING
+        if self.tracker.get(mac) is None:
+            self.tracker.register(
+                mac=mac,
+                profile=rule.profile,
+                os_family=rule.os_family,
+                os_version=rule.os_version,
+            )
+        self.tracker.transition(mac, ProvisionState.INSTALLING)
+
         return plugin.generate_autoinstall(profile)
 
     def get_rule(

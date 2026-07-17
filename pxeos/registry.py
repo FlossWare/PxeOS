@@ -68,6 +68,7 @@ class PluginRegistry:
             "pxeos.plugins.ubuntu",
             "pxeos.plugins.suse",
             "pxeos.plugins.freebsd",
+            "pxeos.plugins.dragonflybsd",
             "pxeos.plugins.openbsd",
             "pxeos.plugins.netbsd",
             "pxeos.plugins.arch",

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}PxeOS - Profiles{% endblock %}
+{% block content %}
+<h2>Provisioning Profiles</h2>
+
+{% if flash %}
+<div class="flash flash-{{ flash.type }}">{{ flash.message }}</div>
+{% endif %}
+
+<div class="card">
+    <h3>Add Profile</h3>
+    <form hx-post="/web/profiles" hx-target="#profile-list" hx-swap="innerHTML">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="name">Profile Name</label>
+                <input type="text" id="name" name="name" required placeholder="webserver">
+            </div>
+            <div class="form-group">
+                <label for="os_family">OS Family</label>
+                <select id="os_family" name="os_family" required>
+                    <option value="">Select...</option>
+                    {% for plugin in plugins %}
+                    <option value="{{ plugin }}">{{ plugin }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="vendor">Vendor</label>
+                <input type="text" id="vendor" name="vendor" placeholder="fedora, rhel, rocky...">
+            </div>
+            <div class="form-group">
+                <label for="os_version">Version</label>
+                <input type="text" id="os_version" name="os_version" required placeholder="42">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="arch">Architecture</label>
+                <select id="arch" name="arch">
+                    <option value="x86_64">x86_64</option>
+                    <option value="aarch64">aarch64</option>
+                    <option value="amd64">amd64</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="firmware">Firmware</label>
+                <select id="firmware" name="firmware">
+                    <option value="bios">BIOS</option>
+                    <option value="uefi">UEFI</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="install_url">Install URL</label>
+                <input type="text" id="install_url" name="install_url" placeholder="https://mirror.example.com/...">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="packages">Packages (comma-separated)</label>
+            <input type="text" id="packages" name="packages" placeholder="nginx, certbot, firewalld">
+        </div>
+        <div class="form-group">
+            <label for="post_scripts">Post-install commands (one per line)</label>
+            <textarea id="post_scripts" name="post_scripts" placeholder="systemctl enable nginx&#10;firewall-cmd --permanent --add-service=http"></textarea>
+        </div>
+        <div class="actions">
+            <button type="submit" class="btn btn-primary">Add Profile</button>
+            <span class="htmx-indicator"><span class="spinner"></span></span>
+        </div>
+    </form>
+</div>
+
+<div class="card" id="profile-list">
+    <h3>Existing Profiles</h3>
+    {% if profiles %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>OS</th>
+                <th>Vendor</th>
+                <th>Version</th>
+                <th>Arch</th>
+                <th>Firmware</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in profiles %}
+            <tr>
+                <td>{{ p.name }}</td>
+                <td>{{ p.os_family }}</td>
+                <td>{{ p.vendor or "-" }}</td>
+                <td>{{ p.os_version }}</td>
+                <td>{{ p.arch }}</td>
+                <td>{{ p.firmware }}</td>
+                <td>
+                    <button class="btn btn-danger btn-sm"
+                            hx-delete="/web/profiles/{{ p.name }}"
+                            hx-confirm="Delete profile {{ p.name }}?"
+                            hx-target="closest tr"
+                            hx-swap="outerHTML">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No profiles configured.</div>
+    {% endif %}
+</div>
+{% endblock %}

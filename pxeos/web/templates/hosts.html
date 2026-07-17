@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}PxeOS - Host Rules{% endblock %}
+{% block content %}
+<h2>Host Rules</h2>
+
+{% if flash %}
+<div class="flash flash-{{ flash.type }}">{{ flash.message }}</div>
+{% endif %}
+
+<div class="card">
+    <h3>Add Host Rule</h3>
+    <form hx-post="/web/hosts" hx-target="#host-list" hx-swap="innerHTML">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="profile">Profile</label>
+                <input type="text" id="profile" name="profile" required placeholder="webserver">
+            </div>
+            <div class="form-group">
+                <label for="os_family">OS Family</label>
+                <select id="os_family" name="os_family" required>
+                    <option value="">Select...</option>
+                    {% for plugin in plugins %}
+                    <option value="{{ plugin }}">{{ plugin }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="vendor">Vendor</label>
+                <input type="text" id="vendor" name="vendor" placeholder="fedora">
+            </div>
+            <div class="form-group">
+                <label for="os_version">Version</label>
+                <input type="text" id="os_version" name="os_version" required placeholder="42">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="mac">MAC Address</label>
+                <input type="text" id="mac" name="mac" placeholder="aa:bb:cc:dd:ee:ff">
+            </div>
+            <div class="form-group">
+                <label for="hostname_pattern">Hostname Pattern</label>
+                <input type="text" id="hostname_pattern" name="hostname_pattern" placeholder="web-*">
+            </div>
+            <div class="form-group">
+                <label for="subnet">Subnet (CIDR)</label>
+                <input type="text" id="subnet" name="subnet" placeholder="10.0.5.0/24">
+            </div>
+            <div class="form-group">
+                <label for="group">Group</label>
+                <input type="text" id="group" name="group" placeholder="lab">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="priority">Priority (lower = higher)</label>
+                <input type="number" id="priority" name="priority" value="100">
+            </div>
+        </div>
+        <div class="actions">
+            <button type="submit" class="btn btn-primary">Add Host Rule</button>
+            <span class="htmx-indicator"><span class="spinner"></span></span>
+        </div>
+    </form>
+</div>
+
+<div class="card" id="host-list">
+    <h3>Existing Rules</h3>
+    {% if hosts %}
+    <table>
+        <thead>
+            <tr>
+                <th>Priority</th>
+                <th>Profile</th>
+                <th>OS</th>
+                <th>Match Criteria</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for h in hosts %}
+            <tr>
+                <td>{{ h.priority }}</td>
+                <td>{{ h.profile }}</td>
+                <td>{{ h.os_family }}/{{ h.os_version }}{% if h.vendor %} [{{ h.vendor }}]{% endif %}</td>
+                <td>
+                    {% if h.mac %}<code>mac={{ h.mac }}</code> {% endif %}
+                    {% if h.hostname_pattern %}<code>host={{ h.hostname_pattern }}</code> {% endif %}
+                    {% if h.subnet %}<code>subnet={{ h.subnet }}</code> {% endif %}
+                    {% if h.group %}<code>group={{ h.group }}</code> {% endif %}
+                    {% if h.serial %}<code>serial={{ h.serial }}</code> {% endif %}
+                    {% if h.arch %}<code>arch={{ h.arch }}</code> {% endif %}
+                    {% if not h.mac and not h.hostname_pattern and not h.subnet and not h.group %}
+                    <span class="muted">default</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No host rules configured.</div>
+    {% endif %}
+</div>
+{% endblock %}

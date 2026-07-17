@@ -1,0 +1,77 @@
+#!/bin/sh
+#
+# DragonFlyBSD automated installation configuration
+# Profile: {{ hostname }}
+#
+
+# --------------- Distribution Sets ---------------
+DISTRIBUTIONS="{{ distributions }}"
+export DISTRIBUTIONS
+
+{% if install_url %}
+export BSDINSTALL_DISTSITE="{{ install_url }}"
+{% endif %}
+
+# --------------- Partitioning ---------------
+{% if use_hammer2 %}
+export PARTITIONS="{{ target_disk }} {% raw %}{ auto hammer2 / }{% endraw %}"
+{% else %}
+export PARTITIONS="{{ target_disk }} {% raw %}{ auto ufs / }{% endraw %}"
+{% endif %}
+
+# --------------- Non-interactive ---------------
+export nonInteractive="YES"
+
+#!/bin/sh
+#
+# Post-installation configuration
+#
+
+# --------------- Timezone ---------------
+cp /usr/share/zoneinfo/{{ timezone }} /etc/localtime
+echo "{{ timezone }}" > /var/db/zoneinfo
+
+# --------------- Hostname ---------------
+echo 'hostname="{{ hostname }}.{{ domain }}"' >> /etc/rc.conf
+
+# --------------- Network ---------------
+{% if use_dhcp %}
+echo 'ifconfig_{{ iface }}="DHCP"' >> /etc/rc.conf
+{% else %}
+echo 'ifconfig_{{ iface }}="inet {{ ipv4 }} netmask {{ netmask }}"' >> /etc/rc.conf
+echo 'defaultrouter="{{ gateway }}"' >> /etc/rc.conf
+{% endif %}
+
+cat > /etc/resolv.conf << 'RESOLV'
+{% for ns in nameservers %}
+nameserver {{ ns }}
+{% endfor %}
+search {{ domain }}
+RESOLV
+
+# --------------- Services ---------------
+{% for svc in services %}
+echo '{{ svc }}_enable="YES"' >> /etc/rc.conf
+{% endfor %}
+
+# --------------- Console & Keymap ---------------
+echo 'keymap="{{ keymap }}"' >> /etc/rc.conf
+
+# --------------- Root Password ---------------
+echo '{{ root_password }}' | pw usermod root -H 0
+
+# --------------- Security Hardening ---------------
+echo 'sendmail_enable="NONE"' >> /etc/rc.conf
+
+# --------------- Packages ---------------
+{% if packages %}
+pkg install -y {{ packages | join(' ') }}
+{% endif %}
+
+# --------------- Post-Install Scripts ---------------
+{% for script in post_scripts %}
+{{ script }}
+{% endfor %}
+
+# --------------- Finalize ---------------
+sync

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}PxeOS - Cloud-Init{% endblock %}
+{% block content %}
+<h2>Cloud-Init Config Generator</h2>
+
+<div class="card">
+    <h3>Generate Cloud-Init Configuration</h3>
+    <form hx-post="/web/cloud-init/generate" hx-target="#cloud-init-output" hx-swap="innerHTML">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="name">Instance Name</label>
+                <input type="text" id="name" name="name" required placeholder="myvm">
+            </div>
+            <div class="form-group">
+                <label for="hostname">Hostname</label>
+                <input type="text" id="hostname" name="hostname" placeholder="myvm (defaults to name)">
+            </div>
+            <div class="form-group">
+                <label for="user">User</label>
+                <input type="text" id="user" name="user" value="admin">
+            </div>
+            <div class="form-group">
+                <label for="password">Password (optional)</label>
+                <input type="password" id="password" name="password" placeholder="leave blank for key-only">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="ssh_keys">SSH Authorized Keys (one per line)</label>
+            <textarea id="ssh_keys" name="ssh_keys" placeholder="ssh-ed25519 AAAA... user@host"></textarea>
+        </div>
+        <div class="form-group">
+            <label for="packages">Packages (comma-separated)</label>
+            <input type="text" id="packages" name="packages" placeholder="nginx, git, certbot">
+        </div>
+        <div class="form-group">
+            <label for="post_scripts">Post-install commands (one per line)</label>
+            <textarea id="post_scripts" name="post_scripts" placeholder="systemctl enable nginx&#10;ufw allow 80/tcp"></textarea>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="network">Network</label>
+                <select id="network" name="network">
+                    <option value="dhcp">DHCP</option>
+                    <option value="static">Static IP</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="ip">IP Address (static only)</label>
+                <input type="text" id="ip" name="ip" placeholder="10.0.0.50/24">
+            </div>
+            <div class="form-group">
+                <label for="gateway">Gateway (static only)</label>
+                <input type="text" id="gateway" name="gateway" placeholder="10.0.0.1">
+            </div>
+            <div class="form-group">
+                <label for="dns">DNS (comma-separated)</label>
+                <input type="text" id="dns" name="dns" value="8.8.8.8,8.8.4.4">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="timezone">Timezone</label>
+                <input type="text" id="timezone" name="timezone" value="UTC">
+            </div>
+            <div class="form-group">
+                <label for="locale">Locale</label>
+                <input type="text" id="locale" name="locale" value="en_US.UTF-8">
+            </div>
+        </div>
+        <div class="actions">
+            <button type="submit" class="btn btn-primary">Generate</button>
+            <button type="submit" formaction="/web/cloud-init/iso" class="btn btn-primary">Download ISO</button>
+            <span class="htmx-indicator"><span class="spinner"></span></span>
+        </div>
+    </form>
+</div>
+
+<div id="cloud-init-output">
+    {% if user_data %}
+    <div class="card">
+        <h3>user-data</h3>
+        <pre>{{ user_data }}</pre>
+    </div>
+    <div class="card">
+        <h3>meta-data</h3>
+        <pre>{{ meta_data }}</pre>
+    </div>
+    {% if network_config %}
+    <div class="card">
+        <h3>network-config</h3>
+        <pre>{{ network_config }}</pre>
+    </div>
+    {% endif %}
+    {% endif %}
+</div>
+{% endblock %}

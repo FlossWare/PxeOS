@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}PxeOS - Import{% endblock %}
+{% block content %}
+<h2>Import Distro</h2>
+
+<div class="card">
+    <h3>Upload ISO</h3>
+    <form hx-post="/web/import/upload" hx-target="#import-result" hx-swap="innerHTML"
+          hx-encoding="multipart/form-data">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="upload_os_family">OS Family</label>
+                <select id="upload_os_family" name="os_family" required>
+                    <option value="">Select...</option>
+                    {% for plugin in plugins %}
+                    <option value="{{ plugin }}">{{ plugin }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="upload_vendor">Vendor</label>
+                <input type="text" id="upload_vendor" name="vendor" placeholder="fedora, rhel, rocky...">
+            </div>
+            <div class="form-group">
+                <label for="upload_version">Version</label>
+                <input type="text" id="upload_version" name="version" required placeholder="42">
+            </div>
+            <div class="form-group">
+                <label for="upload_arch">Architecture</label>
+                <select id="upload_arch" name="arch">
+                    <option value="x86_64">x86_64</option>
+                    <option value="aarch64">aarch64</option>
+                    <option value="amd64">amd64</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="iso_file">ISO File</label>
+            <input type="file" id="iso_file" name="iso_file" accept=".iso" required>
+        </div>
+        <div class="actions">
+            <button type="submit" class="btn btn-primary">Upload &amp; Import</button>
+            <span class="htmx-indicator"><span class="spinner"></span></span>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Fetch from URL</h3>
+    <form hx-post="/web/import/fetch" hx-target="#import-result" hx-swap="innerHTML">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="fetch_os_family">OS Family</label>
+                <select id="fetch_os_family" name="os_family" required>
+                    <option value="">Select...</option>
+                    {% for plugin in plugins %}
+                    <option value="{{ plugin }}">{{ plugin }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="fetch_vendor">Vendor</label>
+                <input type="text" id="fetch_vendor" name="vendor" placeholder="fedora, rhel, rocky...">
+            </div>
+            <div class="form-group">
+                <label for="fetch_version">Version</label>
+                <input type="text" id="fetch_version" name="version" required placeholder="42">
+            </div>
+            <div class="form-group">
+                <label for="fetch_arch">Architecture</label>
+                <select id="fetch_arch" name="arch">
+                    <option value="x86_64">x86_64</option>
+                    <option value="aarch64">aarch64</option>
+                    <option value="amd64">amd64</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="kernel_url">Kernel URL</label>
+            <input type="url" id="kernel_url" name="kernel_url" required
+                   placeholder="https://mirror.example.com/fedora/42/os/images/pxeboot/vmlinuz">
+        </div>
+        <div class="form-group">
+            <label for="initrd_url">Initrd URL (optional for some OSes)</label>
+            <input type="url" id="initrd_url" name="initrd_url"
+                   placeholder="https://mirror.example.com/fedora/42/os/images/pxeboot/initrd.img">
+        </div>
+        <div class="actions">
+            <button type="submit" class="btn btn-primary">Fetch &amp; Import</button>
+            <span class="htmx-indicator"><span class="spinner"></span></span>
+        </div>
+    </form>
+</div>
+
+<div id="import-result">
+    {% if result %}
+    <div class="card">
+        <h3>Import Result</h3>
+        <div class="flash flash-{{ result.type }}">{{ result.message }}</div>
+        {% if result.paths %}
+        <table>
+            <tbody>
+                <tr><td>Kernel</td><td><code>{{ result.paths.kernel }}</code></td></tr>
+                {% if result.paths.initrd %}
+                <tr><td>Initrd</td><td><code>{{ result.paths.initrd }}</code></td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}PxeOS - Distros{% endblock %}
+{% block content %}
+<h2>Imported Distros</h2>
+
+{% if flash %}
+<div class="flash flash-{{ flash.type }}">{{ flash.message }}</div>
+{% endif %}
+
+<div class="card">
+    {% if distros %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Path</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for distro in distros %}
+            <tr>
+                <td>{{ distro.name }}</td>
+                <td><code>{{ distro.path }}</code></td>
+                <td>
+                    <button class="btn btn-danger btn-sm"
+                            hx-delete="/web/distros/{{ distro.name }}"
+                            hx-confirm="Delete distro {{ distro.name }}?"
+                            hx-target="closest tr"
+                            hx-swap="outerHTML">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No distros imported yet. Use the <a href="/web/import">Import</a> page to add one.</div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}PxeOS - Dashboard{% endblock %}
+{% block content %}
+<h2>Dashboard</h2>
+
+<div class="stats">
+    <div class="stat">
+        <div class="value">{{ distro_count }}</div>
+        <div class="label">Imported Distros</div>
+    </div>
+    <div class="stat">
+        <div class="value">{{ profile_count }}</div>
+        <div class="label">Profiles</div>
+    </div>
+    <div class="stat">
+        <div class="value">{{ host_count }}</div>
+        <div class="label">Host Rules</div>
+    </div>
+    <div class="stat">
+        <div class="value">{{ plugin_count }}</div>
+        <div class="label">OS Plugins</div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Loaded Plugins</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>OS Family</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for plugin in plugins %}
+            <tr>
+                <td>{{ plugin }}</td>
+                <td>
+                    {% if plugin in ["fedora", "debian", "ubuntu", "suse", "arch"] %}
+                    <span class="badge badge-linux">Linux</span>
+                    {% elif plugin in ["freebsd", "openbsd", "netbsd"] %}
+                    <span class="badge badge-bsd">BSD</span>
+                    {% elif plugin == "windows" %}
+                    <span class="badge badge-windows">Windows</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h3>Server Info</h3>
+    <table>
+        <tbody>
+            <tr><td>Version</td><td>{{ version }}</td></tr>
+            <tr><td>Host</td><td>{{ server_host }}</td></tr>
+            <tr><td>Port</td><td>{{ server_port }}</td></tr>
+            <tr><td>TLS</td><td>{{ "Enabled" if tls else "Disabled" }}</td></tr>
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -35,7 +36,7 @@ class TestBuildParser:
 
         assert subparser_action is not None
         registered = set(subparser_action.choices.keys())
-        expected = {"server", "import", "profile", "host", "client"}
+        expected = {"server", "import", "profile", "host", "client", "cloud-init", "distro", "secret", "named-host"}
         assert expected == registered
 
     def test_config_default_path(self):
@@ -50,11 +51,23 @@ class TestBuildParser:
         args = parser.parse_args(["--config", "/tmp/custom.toml", "server", "status"])
         assert args.config == Path("/tmp/custom.toml")
 
-    def test_import_requires_os_and_version(self):
-        """'import' subcommand requires --os and --version."""
+    def test_import_accepts_distro_mnemonic(self):
+        """'import' subcommand accepts --distro instead of --os/--version."""
         parser = _build_parser()
-        with pytest.raises(SystemExit):
-            parser.parse_args(["import", "--iso", "/tmp/test.iso"])
+        args = parser.parse_args([
+            "import", "--iso", "/tmp/test.iso", "--distro", "fedora42",
+        ])
+        assert args.distro == "fedora42"
+
+    def test_import_accepts_os_and_version(self):
+        """'import' subcommand accepts --os and --version."""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "import", "--iso", "/tmp/test.iso",
+            "--os", "fedora", "--version", "42",
+        ])
+        assert args.os_family == "fedora"
+        assert args.os_version == "42"
 
     def test_import_iso_and_url_mutually_exclusive(self):
         """'import' subcommand does not allow both --iso and --url."""
@@ -259,3 +272,62 @@ class TestInitStackIntegration:
         mock_init_stack.assert_called_once()
         call_arg = mock_init_stack.call_args[0][0]
         assert call_arg == Path("/tmp/my-config.toml")
+
+
+# ---------------------------------------------------------------------------
+# argcomplete integration
+# ---------------------------------------------------------------------------
+
+class TestArgcomplete:
+    """Tests for argcomplete tab-completion support."""
+
+    def test_python_argcomplete_ok_comment_exists(self):
+        """cli.py source contains the PYTHON_ARGCOMPLETE_OK marker comment."""
+        source_path = Path(inspect.getfile(main))
+        source = source_path.read_text()
+        assert "# PYTHON_ARGCOMPLETE_OK" in source
+
+    @patch("pxeos.cli._init_stack")
+    def test_main_works_without_argcomplete(self, mock_init_stack, capsys):
+        """main() works gracefully when argcomplete is not installed."""
+        from pxeos.config import PxeOSConfig
+        from pxeos.matcher import HostMatcher
+
+        config = PxeOSConfig()
+        mock_registry = MagicMock()
+        mock_registry.available = []
+        matcher = HostMatcher([])
+        mock_init_stack.return_value = (config, mock_registry, matcher)
+
+        import pxeos.cli as cli_module
+
+        original = cli_module.argcomplete
+        try:
+            cli_module.argcomplete = None
+            result = main(["server", "status"])
+            assert result == 0
+        finally:
+            cli_module.argcomplete = original
+
+    @patch("pxeos.cli._init_stack")
+    def test_main_calls_autocomplete_when_available(self, mock_init_stack):
+        """main() calls argcomplete.autocomplete(parser) when argcomplete is available."""
+        from pxeos.config import PxeOSConfig
+        from pxeos.matcher import HostMatcher
+
+        config = PxeOSConfig()
+        mock_registry = MagicMock()
+        mock_registry.available = []
+        matcher = HostMatcher([])
+        mock_init_stack.return_value = (config, mock_registry, matcher)
+
+        import pxeos.cli as cli_module
+
+        mock_argcomplete = MagicMock()
+        original = cli_module.argcomplete
+        try:
+            cli_module.argcomplete = mock_argcomplete
+            main(["server", "status"])
+            mock_argcomplete.autocomplete.assert_called_once()
+        finally:
+            cli_module.argcomplete = original

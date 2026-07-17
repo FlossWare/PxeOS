@@ -56,6 +56,7 @@ class TestLoadBuiltins:
     EXPECTED_BUILTINS = sorted([
         "arch",
         "debian",
+        "dragonflybsd",
         "fedora",
         "freebsd",
         "netbsd",
@@ -69,7 +70,7 @@ class TestLoadBuiltins:
         assert plugin_registry.available == self.EXPECTED_BUILTINS
 
     def test_load_builtins_count(self, plugin_registry):
-        assert len(plugin_registry.available) == 9
+        assert len(plugin_registry.available) == 10
 
     def test_each_builtin_is_os_plugin(self, plugin_registry):
         for name in self.EXPECTED_BUILTINS:
@@ -81,7 +82,7 @@ class TestLoadBuiltins:
         registry = PluginRegistry()
         registry.load_builtins()
         registry.load_builtins()
-        assert len(registry.available) == 9
+        assert len(registry.available) == 10
 
 
 # ---------------------------------------------------------------------------

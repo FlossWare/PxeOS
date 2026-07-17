@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from pxeos.config import PxeOSConfig, load_hosts
 from pxeos.engine import ProvisioningEngine
 from pxeos.matcher import HostMatcher
+from pxeos.models import BootFirmware, ProvisionProfile
 from pxeos.registry import PluginRegistry
+from pxeos.state import ProvisionState, ProvisionTracker
 
 app = FastAPI(
     title="PxeOS",
@@ -74,6 +78,24 @@ class HealthResponse(BaseModel):
     version: str
 
 
+class ProvisionStatusResponse(BaseModel):
+    mac: str
+    profile: str
+    os_family: str
+    os_version: str
+    state: str
+    started_at: Optional[float] = None
+    updated_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    error_message: Optional[str] = None
+    history: List[Dict[str, Any]] = []
+    netboot_enabled: bool = True
+
+
+class ProvisionFailRequest(BaseModel):
+    error: str
+
+
 def init_app(
     registry: PluginRegistry,
     config: PxeOSConfig,
@@ -83,6 +105,10 @@ def init_app(
     _registry = registry
     _config = config
     _engine = ProvisioningEngine(registry, matcher, config)
+
+    from pxeos.web.routes import router as web_router
+    app.include_router(web_router)
+
     return app
 
 
@@ -97,6 +123,60 @@ def get_boot_script(mac: str) -> Response:
         )
     except ValueError as exc:
         raise HTTPException(404, str(exc))
+
+
+# ---------------------------------------------------------------
+# Boot-once / netboot control endpoints (issue #19)
+# ---------------------------------------------------------------
+
+
+class NetbootStatusResponse(BaseModel):
+    mac: str
+    netboot_enabled: bool
+
+
+@app.post("/api/v1/provision/{mac}/disable-netboot")
+def disable_netboot(mac: str) -> Dict[str, Any]:
+    """Disable PXE netboot for a MAC (boot-once: after successful provisioning)."""
+    if _engine is None:
+        raise HTTPException(503, "engine not initialized")
+    try:
+        record = _engine.tracker.disable_netboot(mac)
+        return {
+            "mac": record.mac,
+            "netboot_enabled": record.netboot_enabled,
+            "status": "netboot disabled",
+        }
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.post("/api/v1/provision/{mac}/enable-netboot")
+def enable_netboot(mac: str) -> Dict[str, Any]:
+    """Re-enable PXE netboot for a MAC (for re-provisioning)."""
+    if _engine is None:
+        raise HTTPException(503, "engine not initialized")
+    try:
+        record = _engine.tracker.enable_netboot(mac)
+        return {
+            "mac": record.mac,
+            "netboot_enabled": record.netboot_enabled,
+            "status": "netboot enabled",
+        }
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.get(
+    "/api/v1/provision/{mac}/netboot-status",
+    response_model=NetbootStatusResponse,
+)
+def get_netboot_status(mac: str) -> Dict[str, Any]:
+    """Return the current netboot status for a MAC."""
+    if _engine is None:
+        raise HTTPException(503, "engine not initialized")
+    enabled = _engine.tracker.is_netboot_enabled(mac)
+    return {"mac": mac, "netboot_enabled": enabled}
 
 
 @app.get("/api/v1/autoinstall/{mac}")
@@ -241,3 +321,662 @@ def health_check() -> Dict[str, Any]:
         "plugins": plugins,
         "version": __version__,
     }
+
+
+# ---------------------------------------------------------------
+# Provisioning state tracking endpoints
+# ---------------------------------------------------------------
+
+
+@app.get(
+    "/api/v1/provision/{mac}/status",
+    response_model=ProvisionStatusResponse,
+)
+def get_provision_status(mac: str) -> Dict[str, Any]:
+    if _engine is None:
+        raise HTTPException(503, "engine not initialized")
+    record = _engine.tracker.get(mac)
+    if record is None:
+        raise HTTPException(
+            404, f"no provisioning record for {mac!r}"
+        )
+    return record.to_dict()
+
+
+@app.post(
+    "/api/v1/provision/{mac}/complete",
+    response_model=ProvisionStatusResponse,
+)
+def mark_provision_complete(mac: str) -> Dict[str, Any]:
+    if _engine is None:
+        raise HTTPException(503, "engine not initialized")
+    record = _engine.tracker.get(mac)
+    if record is None:
+        raise HTTPException(
+            404, f"no provisioning record for {mac!r}"
+        )
+    _engine.tracker.transition(mac, ProvisionState.COMPLETE)
+    return record.to_dict()
+
+
+@app.post(
+    "/api/v1/provision/{mac}/failed",
+    response_model=ProvisionStatusResponse,
+)
+def mark_provision_failed(
+    mac: str, body: ProvisionFailRequest
+) -> Dict[str, Any]:
+    if _engine is None:
+        raise HTTPException(503, "engine not initialized")
+    record = _engine.tracker.get(mac)
+    if record is None:
+        raise HTTPException(
+            404, f"no provisioning record for {mac!r}"
+        )
+    _engine.tracker.transition(
+        mac, ProvisionState.FAILED, error_message=body.error
+    )
+    return record.to_dict()
+
+
+@app.get(
+    "/api/v1/provision",
+    response_model=List[ProvisionStatusResponse],
+)
+def list_provisions() -> List[Dict[str, Any]]:
+    if _engine is None:
+        raise HTTPException(503, "engine not initialized")
+    return [r.to_dict() for r in _engine.tracker.list_all()]
+
+
+# ---------------------------------------------------------------
+# Cloud-init endpoints (absorbed from VirtOS virtos-cloud-init)
+# ---------------------------------------------------------------
+
+
+class CloudInitRequest(BaseModel):
+    name: str
+    os_family: str = ""
+    os_version: str = ""
+    vendor: str = ""
+    hostname: str = ""
+    user: str = "admin"
+    password: Optional[str] = None
+    ssh_authorized_keys: List[str] = []
+    packages: List[str] = []
+    post_scripts: List[str] = []
+    network_method: str = "dhcp"
+    network_device: str = "eth0"
+    address: Optional[str] = None
+    gateway: Optional[str] = None
+    nameservers: List[str] = []
+    timezone: str = "UTC"
+    locale: str = "en_US.UTF-8"
+    write_files: List[Dict[str, Any]] = []
+    extra: Dict[str, Any] = {}
+
+
+class CloudInitResponse(BaseModel):
+    user_data: str
+    meta_data: str
+    network_config: str
+
+
+def _profile_from_cloud_init_request(
+    req: CloudInitRequest,
+) -> ProvisionProfile:
+    network: Dict[str, Any] = {
+        "method": req.network_method,
+        "hostname": req.hostname or req.name,
+        "device": req.network_device,
+    }
+    if req.address:
+        network["address"] = req.address
+    if req.gateway:
+        network["gateway"] = req.gateway
+    if req.nameservers:
+        network["nameservers"] = req.nameservers
+
+    extra: Dict[str, Any] = {
+        "user": req.user,
+        "timezone": req.timezone,
+        "locale": req.locale,
+        **req.extra,
+    }
+    if req.password:
+        extra["password"] = req.password
+    if req.ssh_authorized_keys:
+        extra["ssh_authorized_keys"] = req.ssh_authorized_keys
+    if req.write_files:
+        extra["write_files"] = req.write_files
+
+    return ProvisionProfile(
+        name=req.name,
+        os_family=req.os_family,
+        os_version=req.os_version,
+        vendor=req.vendor,
+        network=network,
+        packages=req.packages,
+        post_scripts=req.post_scripts,
+        extra=extra,
+    )
+
+
+@app.post(
+    "/api/v1/cloud-init/generate",
+    response_model=CloudInitResponse,
+)
+def generate_cloud_init(
+    req: CloudInitRequest,
+) -> Dict[str, str]:
+    from pxeos.cloud_init import generate
+
+    profile = _profile_from_cloud_init_request(req)
+    config = generate(profile)
+    return {
+        "user_data": config.user_data,
+        "meta_data": config.meta_data,
+        "network_config": config.network_config,
+    }
+
+
+@app.post("/api/v1/cloud-init/iso")
+def generate_cloud_init_iso(req: CloudInitRequest) -> Response:
+    from pxeos.cloud_init import create_config_drive
+
+    profile = _profile_from_cloud_init_request(req)
+
+    with tempfile.NamedTemporaryFile(
+        suffix=".iso", delete=False
+    ) as tmp:
+        output_path = Path(tmp.name)
+
+    try:
+        create_config_drive(profile, output_path)
+        return FileResponse(
+            path=str(output_path),
+            media_type="application/octet-stream",
+            filename=f"{req.name}-cloud-init.iso",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc))
+
+
+_cloud_init_store: Dict[str, Dict[str, str]] = {}
+
+
+@app.post("/api/v1/cloud-init/register")
+def register_cloud_init(
+    req: CloudInitRequest,
+) -> Dict[str, str]:
+    from pxeos.cloud_init import generate
+
+    profile = _profile_from_cloud_init_request(req)
+    config = generate(profile)
+    instance_id = profile.extra.get(
+        "instance_id",
+        f"{req.hostname or req.name}-{req.os_version}",
+    )
+    _cloud_init_store[instance_id] = {
+        "user_data": config.user_data,
+        "meta_data": config.meta_data,
+        "network_config": config.network_config,
+    }
+    return {"instance_id": instance_id, "status": "registered"}
+
+
+@app.get("/api/v1/cloud-init/{instance_id}/user-data")
+def get_cloud_init_user_data(instance_id: str) -> Response:
+    entry = _cloud_init_store.get(instance_id)
+    if not entry:
+        raise HTTPException(404, f"instance {instance_id!r} not found")
+    return Response(content=entry["user_data"], media_type="text/yaml")
+
+
+@app.get("/api/v1/cloud-init/{instance_id}/meta-data")
+def get_cloud_init_meta_data(instance_id: str) -> Response:
+    entry = _cloud_init_store.get(instance_id)
+    if not entry:
+        raise HTTPException(404, f"instance {instance_id!r} not found")
+    return Response(content=entry["meta_data"], media_type="text/yaml")
+
+
+@app.get("/api/v1/cloud-init/{instance_id}/network-config")
+def get_cloud_init_network_config(instance_id: str) -> Response:
+    entry = _cloud_init_store.get(instance_id)
+    if not entry:
+        raise HTTPException(404, f"instance {instance_id!r} not found")
+    return Response(
+        content=entry["network_config"], media_type="text/yaml"
+    )
+
+
+# ---------------------------------------------------------------
+# Remote ISO import endpoints
+# ---------------------------------------------------------------
+
+
+class ImportFetchRequest(BaseModel):
+    url: str
+    os_family: str = ""
+    vendor: str = ""
+    os_version: str = ""
+    arch: str = "x86_64"
+    mnemonic: Optional[str] = None
+
+
+class ImportResponse(BaseModel):
+    kernel_path: str
+    initrd_path: Optional[str] = None
+    repo_path: str
+
+
+@app.post(
+    "/api/v1/import/upload",
+    response_model=ImportResponse,
+)
+async def import_upload(
+    file: UploadFile = File(...),
+    os_family: str = Form(""),
+    os_version: str = Form(""),
+    vendor: str = Form(""),
+    arch: str = Form("x86_64"),
+    mnemonic: str = Form(""),
+) -> Dict[str, Any]:
+    if _config is None or _registry is None:
+        raise HTTPException(503, "not initialized")
+
+    if mnemonic:
+        from pxeos.mnemonics import resolve_mnemonic
+
+        alias = resolve_mnemonic(mnemonic)
+        if alias is None:
+            raise HTTPException(
+                400, f"unknown mnemonic {mnemonic!r}"
+            )
+        if not os_family:
+            os_family = alias.os_family
+        if not vendor:
+            vendor = alias.vendor
+        if not os_version:
+            os_version = alias.version
+
+    if not os_family or not os_version:
+        raise HTTPException(
+            400, "mnemonic or os_family+os_version required"
+        )
+
+    from pxeos.importer import import_iso
+
+    with tempfile.NamedTemporaryFile(
+        suffix=".iso", delete=False
+    ) as tmp:
+        iso_path = Path(tmp.name)
+        content = await file.read()
+        tmp.write(content)
+
+    try:
+        assets = import_iso(
+            iso_path, os_family, vendor, os_version, arch,
+            _registry, _config.distro_root,
+        )
+        return {
+            "kernel_path": str(assets.kernel_path),
+            "initrd_path": (
+                str(assets.initrd_path) if assets.initrd_path else None
+            ),
+            "repo_path": str(assets.repo_path),
+        }
+    finally:
+        iso_path.unlink(missing_ok=True)
+
+
+@app.post(
+    "/api/v1/import/fetch",
+    response_model=ImportResponse,
+)
+def import_fetch(req: ImportFetchRequest) -> Dict[str, Any]:
+    if _config is None or _registry is None:
+        raise HTTPException(503, "not initialized")
+
+    os_family = req.os_family
+    vendor = req.vendor
+    os_version = req.os_version
+
+    if req.mnemonic:
+        from pxeos.mnemonics import resolve_mnemonic
+
+        alias = resolve_mnemonic(req.mnemonic)
+        if alias is None:
+            raise HTTPException(
+                400, f"unknown mnemonic {req.mnemonic!r}"
+            )
+        if not os_family:
+            os_family = alias.os_family
+        if not vendor:
+            vendor = alias.vendor
+        if not os_version:
+            os_version = alias.version
+
+    if not os_family or not os_version:
+        raise HTTPException(
+            400, "mnemonic or os_family+os_version required"
+        )
+
+    from pxeos.importer import import_url
+
+    assets = import_url(
+        req.url, os_family, vendor,
+        os_version, req.arch,
+        _registry, _config.distro_root,
+    )
+    return {
+        "kernel_path": str(assets.kernel_path),
+        "initrd_path": (
+            str(assets.initrd_path) if assets.initrd_path else None
+        ),
+        "repo_path": str(assets.repo_path),
+    }
+
+
+# ---------------------------------------------------------------
+# Secrets management endpoints
+# ---------------------------------------------------------------
+
+
+class SecretSetRequest(BaseModel):
+    key: str
+    value: str
+
+
+class SecretKeyResponse(BaseModel):
+    keys: List[str]
+
+
+class SecretValueResponse(BaseModel):
+    key: str
+    value: str
+
+
+def _get_secrets_provider():
+    """Return a FileSecretsProvider using the configured data_dir."""
+    from pxeos.secrets import FileSecretsProvider
+
+    if _config is None:
+        raise HTTPException(503, "config not initialized")
+    return FileSecretsProvider(_config.data_dir)
+
+
+@app.post("/api/v1/secrets", status_code=201)
+def set_secret(req: SecretSetRequest) -> Dict[str, str]:
+    provider = _get_secrets_provider()
+    provider.set(req.key, req.value)
+    return {"key": req.key, "status": "stored"}
+
+
+@app.get(
+    "/api/v1/secrets/{key}",
+    response_model=SecretValueResponse,
+)
+def get_secret(key: str) -> Dict[str, str]:
+    provider = _get_secrets_provider()
+    value = provider.get(key)
+    if value is None:
+        raise HTTPException(404, f"secret {key!r} not found")
+    return {"key": key, "value": value}
+
+
+@app.delete("/api/v1/secrets/{key}")
+def delete_secret(key: str) -> Dict[str, str]:
+    provider = _get_secrets_provider()
+    provider.delete(key)
+    return {"key": key, "status": "deleted"}
+
+
+@app.get(
+    "/api/v1/secrets",
+    response_model=SecretKeyResponse,
+)
+def list_secrets() -> Dict[str, List[str]]:
+    provider = _get_secrets_provider()
+    return {"keys": provider.list_keys()}
+
+
+# ---------------------------------------------------------------
+# Named objects (cobbler-style distros & hosts)
+# ---------------------------------------------------------------
+
+
+class NamedDistroRequest(BaseModel):
+    name: str
+    os_family: str
+    vendor: str
+    version: str
+    arch: str = "x86_64"
+    kernel_path: str = ""
+    initrd_path: str = ""
+    install_url: str = ""
+    comment: str = ""
+
+
+class NamedDistroResponse(BaseModel):
+    name: str
+    os_family: str
+    vendor: str
+    version: str
+    arch: str = "x86_64"
+    kernel_path: str = ""
+    initrd_path: str = ""
+    install_url: str = ""
+    comment: str = ""
+
+
+class NamedHostRequest(BaseModel):
+    name: str
+    mac: str
+    profile: str = ""
+    distro: str = ""
+    hostname: str = ""
+    gateway: str = ""
+    nameservers: List[str] = []
+    ip_address: str = ""
+    netmask: str = ""
+    comment: str = ""
+    extra: Dict[str, Any] = {}
+
+
+class NamedHostResponse(BaseModel):
+    name: str
+    mac: str
+    profile: str = ""
+    distro: str = ""
+    hostname: str = ""
+    gateway: str = ""
+    nameservers: List[str] = []
+    ip_address: str = ""
+    netmask: str = ""
+    comment: str = ""
+    extra: Dict[str, Any] = {}
+
+
+def _get_named_store():
+    """Return a NamedObjectStore using the configured data_dir."""
+    from pxeos.named_objects import NamedObjectStore
+
+    if _config is None:
+        raise HTTPException(503, "config not initialized")
+    return NamedObjectStore(_config.data_dir / "named")
+
+
+# -- Named distro endpoints --
+
+
+@app.get(
+    "/api/v1/named/distros",
+    response_model=List[NamedDistroResponse],
+)
+def list_named_distros() -> List[Dict[str, Any]]:
+    from dataclasses import asdict
+
+    store = _get_named_store()
+    return [asdict(d) for d in store.list_distros()]
+
+
+@app.post(
+    "/api/v1/named/distros",
+    response_model=NamedDistroResponse,
+    status_code=201,
+)
+def create_named_distro(
+    req: NamedDistroRequest,
+) -> Dict[str, Any]:
+    from dataclasses import asdict
+
+    from pxeos.named_objects import NamedDistro
+
+    store = _get_named_store()
+    if store.get_distro(req.name) is not None:
+        raise HTTPException(
+            409, f"distro {req.name!r} already exists"
+        )
+    distro = NamedDistro(**req.model_dump())
+    try:
+        store.add_distro(distro)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return asdict(distro)
+
+
+@app.get(
+    "/api/v1/named/distros/{name}",
+    response_model=NamedDistroResponse,
+)
+def get_named_distro(name: str) -> Dict[str, Any]:
+    from dataclasses import asdict
+
+    store = _get_named_store()
+    try:
+        distro = store.get_distro(name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if distro is None:
+        raise HTTPException(404, f"distro {name!r} not found")
+    return asdict(distro)
+
+
+@app.put(
+    "/api/v1/named/distros/{name}",
+    response_model=NamedDistroResponse,
+)
+def update_named_distro(
+    name: str, updates: Dict[str, Any]
+) -> Dict[str, Any]:
+    from dataclasses import asdict
+
+    store = _get_named_store()
+    try:
+        distro = store.update_distro(name, updates)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if distro is None:
+        raise HTTPException(404, f"distro {name!r} not found")
+    return asdict(distro)
+
+
+@app.delete("/api/v1/named/distros/{name}")
+def delete_named_distro(name: str) -> Dict[str, str]:
+    store = _get_named_store()
+    try:
+        deleted = store.delete_distro(name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not deleted:
+        raise HTTPException(404, f"distro {name!r} not found")
+    return {"name": name, "status": "deleted"}
+
+
+# -- Named host endpoints --
+
+
+@app.get(
+    "/api/v1/named/hosts",
+    response_model=List[NamedHostResponse],
+)
+def list_named_hosts() -> List[Dict[str, Any]]:
+    from dataclasses import asdict
+
+    store = _get_named_store()
+    return [asdict(h) for h in store.list_hosts()]
+
+
+@app.post(
+    "/api/v1/named/hosts",
+    response_model=NamedHostResponse,
+    status_code=201,
+)
+def create_named_host(
+    req: NamedHostRequest,
+) -> Dict[str, Any]:
+    from dataclasses import asdict
+
+    from pxeos.named_objects import NamedHost
+
+    store = _get_named_store()
+    if store.get_host(req.name) is not None:
+        raise HTTPException(
+            409, f"host {req.name!r} already exists"
+        )
+    host = NamedHost(**req.model_dump())
+    try:
+        store.add_host(host)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return asdict(host)
+
+
+@app.get(
+    "/api/v1/named/hosts/{name}",
+    response_model=NamedHostResponse,
+)
+def get_named_host(name: str) -> Dict[str, Any]:
+    from dataclasses import asdict
+
+    store = _get_named_store()
+    try:
+        host = store.get_host(name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if host is None:
+        raise HTTPException(404, f"host {name!r} not found")
+    return asdict(host)
+
+
+@app.put(
+    "/api/v1/named/hosts/{name}",
+    response_model=NamedHostResponse,
+)
+def update_named_host(
+    name: str, updates: Dict[str, Any]
+) -> Dict[str, Any]:
+    from dataclasses import asdict
+
+    store = _get_named_store()
+    try:
+        host = store.update_host(name, updates)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if host is None:
+        raise HTTPException(404, f"host {name!r} not found")
+    return asdict(host)
+
+
+@app.delete("/api/v1/named/hosts/{name}")
+def delete_named_host(name: str) -> Dict[str, str]:
+    store = _get_named_store()
+    try:
+        deleted = store.delete_host(name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not deleted:
+        raise HTTPException(404, f"host {name!r} not found")
+    return {"name": name, "status": "deleted"}

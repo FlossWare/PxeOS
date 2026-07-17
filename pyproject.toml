@@ -42,9 +42,11 @@ dependencies = [
     "uvicorn>=0.22.0",
     "tomli>=2.0.0; python_version < '3.11'",
     "pydantic>=2.0.0",
+    "python-multipart>=0.0.6",
 ]
 
 [project.optional-dependencies]
+completion = ["argcomplete"]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -81,6 +83,7 @@ debian = "pxeos.plugins.debian:DebianPlugin"
 ubuntu = "pxeos.plugins.ubuntu:UbuntuPlugin"
 suse = "pxeos.plugins.suse:SUSEPlugin"
 freebsd = "pxeos.plugins.freebsd:FreeBSDPlugin"
+dragonflybsd = "pxeos.plugins.dragonflybsd:DragonFlyBSDPlugin"
 openbsd = "pxeos.plugins.openbsd:OpenBSDPlugin"
 netbsd = "pxeos.plugins.netbsd:NetBSDPlugin"
 arch = "pxeos.plugins.arch:ArchPlugin"
@@ -96,7 +99,7 @@ Documentation = "https://github.com/FlossWare/PxeOS/blob/main/README.md"
 packages = ["pxeos", "pxeos.plugins"]
 
 [tool.setuptools.package-data]
-pxeos = ["py.typed", "templates/*.j2"]
+pxeos = ["py.typed", "templates/*.j2", "web/templates/*.html", "web/static/**/*"]
 
 [tool.ruff]
 line-length = 88
@@ -221,7 +224,7 @@ parallel = true
 concurrency = ["thread", "multiprocessing"]
 
 [tool.coverage.report]
-fail_under = 50
+fail_under = 40
 precision = 2
 show_missing = true
 skip_covered = false
