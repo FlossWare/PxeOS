@@ -1,0 +1,134 @@
+{
+  "_pxeos_comment": "PxeOS generated archinstall config for Arch Linux - Profile: {{ profile.name }}",
+  "config_version": "2.6.4",
+
+  "additional-repositories": [],
+  "archinstall-language": "English",
+
+  "bootloader": "{{ bootloader }}",
+
+  "hostname": "{{ hostname }}",
+  "timezone": "{{ timezone }}",
+  "locale_config": {
+    "kb_layout": "{{ keyboard }}",
+    "sys_enc": "UTF-8",
+    "sys_lang": "{{ locale }}"
+  },
+
+  "mirror_config": {
+    "mirror_regions": {
+      "{{ mirror_region }}": []
+    }
+  },
+
+  "disk_config": {
+{% if disk_layout and disk_layout.get('config') %}
+    "config_type": "manual_partitioning",
+    "device_modifications": {{ disk_layout['config'] | tojson }}
+{% else %}
+    "config_type": "default_layout",
+    "device_modifications": [
+      {
+        "device": "{{ disk_device }}",
+        "wipe": true,
+        "partitions": [
+{% if profile.firmware.value == "uefi" %}
+          {
+            "type": "primary",
+            "start": "1MiB",
+            "size": "512MiB",
+            "fs_type": "fat32",
+            "mount_point": "/boot"
+          },
+{% else %}
+          {
+            "type": "primary",
+            "start": "1MiB",
+            "size": "512MiB",
+            "fs_type": "ext4",
+            "mount_point": "/boot"
+          },
+{% endif %}
+          {
+            "type": "primary",
+            "start": "513MiB",
+            "size": "100%",
+            "fs_type": "{{ filesystem }}",
+            "mount_point": "/"
+          }
+        ]
+      }
+    ]
+{% endif %}
+  },
+
+  "swap": true,
+
+  "network_config": {
+{% if profile.network.get('bootproto') == 'static' %}
+    "type": "manual",
+    "iface": "{{ profile.network.get('device', 'ens3') }}",
+    "ip": "{{ profile.network.get('ip', '') }}",
+    "gateway": "{{ profile.network.get('gateway', '') }}",
+    "dns": [
+{% for ns in profile.network.get('nameservers', []) %}
+      "{{ ns }}"{% if not loop.last %},{% endif %}
+
+{% endfor %}
+    ]
+{% else %}
+    "type": "nm",
+    "nics": []
+{% endif %}
+  },
+
+{% if users %}
+  "!users": [
+{% for user in users %}
+    {
+      "username": "{{ user.get('name', 'admin') }}",
+      "!password": "{{ user.get('password', '') }}",
+      "sudo": {{ user.get('sudo', true) | tojson }}
+    }{% if not loop.last %},{% endif %}
+
+{% endfor %}
+  ],
+{% else %}
+  "!users": [
+    {
+      "username": "admin",
+      "!password": "",
+      "sudo": true
+    }
+  ],
+{% endif %}
+
+  "audio_config": {
+    "audio": "{{ audio }}"
+  },
+
+  "kernels": {{ kernels | tojson }},
+
+  "packages": {{ packages | tojson }},
+
+{% if services %}
+  "services": {{ services | tojson }},
+{% else %}
+  "services": ["sshd"],
+{% endif %}
+
+  "no_pkg_lookups": false,
+  "offline": false,
+  "silent": true,
+  "debug": false
+
+{% if post_scripts %}
+  ,
+  "custom-commands": [
+{% for script in post_scripts %}
+    "{{ script | replace('"', '\\"') | replace('\n', ' && ') }}"{% if not loop.last %},{% endif %}
+
+{% endfor %}
+  ]
+{% endif %}
+}

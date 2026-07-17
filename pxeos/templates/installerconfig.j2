@@ -1,0 +1,90 @@
+#!/bin/sh
+#
+# FreeBSD bsdinstall(8) automated configuration
+# Profile: {{ hostname }}
+#
+
+# --------------- Distribution Sets ---------------
+DISTRIBUTIONS="{{ distributions }}"
+export DISTRIBUTIONS
+
+{% if install_url %}
+export BSDINSTALL_DISTSITE="{{ install_url }}"
+{% endif %}
+
+# --------------- Partitioning ---------------
+{% if use_zfs %}
+ZFSBOOT_DISKS="{{ target_disk }}"
+ZFSBOOT_VDEV_TYPE="stripe"
+ZFSBOOT_POOL_NAME="{{ zfs_pool }}"
+ZFSBOOT_BEROOT_NAME="ROOT"
+ZFSBOOT_BOOTFS_NAME="default"
+ZFSBOOT_SWAP_SIZE="2g"
+ZFSBOOT_CONFIRM_LAYOUT=0
+export ZFSBOOT_DISKS ZFSBOOT_VDEV_TYPE ZFSBOOT_POOL_NAME
+export ZFSBOOT_BEROOT_NAME ZFSBOOT_BOOTFS_NAME
+export ZFSBOOT_SWAP_SIZE ZFSBOOT_CONFIRM_LAYOUT
+{% else %}
+export PARTITIONS="{{ target_disk }} {% raw %}{ auto freebsd-ufs / }{% endraw %}"
+{% endif %}
+
+# --------------- Non-interactive ---------------
+export nonInteractive="YES"
+
+#!/bin/sh
+#
+# Post-installation configuration
+#
+
+# --------------- Timezone ---------------
+tzsetup -s {{ timezone }}
+
+# --------------- Hostname ---------------
+sysrc hostname="{{ hostname }}.{{ domain }}"
+
+# --------------- Network ---------------
+{% if use_dhcp %}
+sysrc ifconfig_{{ iface }}="DHCP"
+{% else %}
+sysrc ifconfig_{{ iface }}="inet {{ ipv4 }} netmask {{ netmask }}"
+sysrc defaultrouter="{{ gateway }}"
+{% endif %}
+
+cat > /etc/resolv.conf << 'RESOLV'
+{% for ns in nameservers %}
+nameserver {{ ns }}
+{% endfor %}
+search {{ domain }}
+RESOLV
+
+# --------------- Services ---------------
+{% for svc in services %}
+sysrc {{ svc }}_enable="YES"
+{% endfor %}
+sysrc clear_tmp_enable="YES"
+sysrc syslogd_flags="-ss"
+
+# --------------- Console & Keymap ---------------
+sysrc keymap="{{ keymap }}"
+
+# --------------- Root Password ---------------
+echo '{{ root_password }}' | pw usermod root -H 0
+
+# --------------- Security Hardening ---------------
+sysrc sendmail_enable="NONE"
+
+# --------------- Packages ---------------
+{% if packages %}
+env ASSUME_ALWAYS_YES=yes pkg bootstrap -f
+{% for pkg in packages %}
+pkg install -y {{ pkg }}
+{% endfor %}
+{% endif %}
+
+# --------------- Post-Install Scripts ---------------
+{% for script in post_scripts %}
+{{ script }}
+{% endfor %}
+
+# --------------- Finalize ---------------
+sync

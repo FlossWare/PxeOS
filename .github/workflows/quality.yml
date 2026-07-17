@@ -1,0 +1,52 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff lint
+        id: ruff-lint
+        run: ruff check pxeos/
+
+      - name: Ruff format check
+        id: ruff-format
+        run: ruff format --check pxeos/
+
+      - name: MyPy type check
+        id: mypy
+        continue-on-error: true
+        run: mypy pxeos/ --ignore-missing-imports
+
+      - name: Bandit security scan
+        id: bandit
+        continue-on-error: true
+        run: bandit -r pxeos/ -c pyproject.toml
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Code Quality Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Ruff lint | ${{ steps.ruff-lint.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ruff format | ${{ steps.ruff-format.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| MyPy | ${{ steps.mypy.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Bandit | ${{ steps.bandit.outcome }} |" >> $GITHUB_STEP_SUMMARY

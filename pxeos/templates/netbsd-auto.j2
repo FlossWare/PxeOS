@@ -1,0 +1,74 @@
+# NetBSD sysinst auto_install.cfg
+# Profile: {{ hostname }}
+#
+# Reference: sysinst(8), auto_install.cfg format
+# Each section configures a step of the installer.
+
+# --------------- System ---------------
+hostname={{ hostname }}.{{ domain }}
+
+# --------------- Network ---------------
+network=yes
+{% if use_dhcp %}
+dhcp={{ iface }}
+{% else %}
+interface={{ iface }}
+ip_address={{ ipv4 }}
+netmask={{ netmask }}
+default_route={{ gateway }}
+{% for ns in nameservers %}
+dns_server={{ ns }}
+{% endfor %}
+{% endif %}
+dns_domain={{ domain }}
+
+# --------------- Disk ---------------
+disk={{ disk_device }}
+{% if disk_layout == 'default' %}
+# Use entire disk with default partitioning
+use_entire_disk=yes
+{% elif disk_layout == 'custom' %}
+use_entire_disk=no
+{% else %}
+use_entire_disk=yes
+{% endif %}
+filesystem={{ filesystem }}
+
+# --------------- Sets ---------------
+{% if install_url %}
+# Fetch distribution sets via HTTP
+fetch=http
+fetch_url={{ install_url }}
+{% endif %}
+
+sets={% for s in selected_sets %}{{ s }}{% if not loop.last %} {% endif %}{% endfor %}
+
+noverify=yes
+
+# --------------- Root Password ---------------
+root_password={{ root_password }}
+root_shell=/bin/sh
+
+# --------------- Timezone ---------------
+timezone={{ timezone }}
+
+# --------------- X11 ---------------
+{% if profile.extra.get('x11', False) %}
+x11=yes
+{% else %}
+x11=no
+{% endif %}
+
+# --------------- Post-Install ---------------
+post_install=yes
+{% if packages %}
+# Package installation
+post_install_cmd=pkg_add {% for pkg in packages %}{{ pkg }}{% if not loop.last %} {% endif %}{% endfor %}
+
+{% endif %}
+{% for script in post_scripts %}
+post_install_cmd={{ script }}
+{% endfor %}
+
+# --------------- Finalize ---------------
+reboot=yes

@@ -1,0 +1,25 @@
+[profile]
+name = "database"
+os_family = "freebsd"
+vendor = "freebsd"
+os_version = "14.2"
+
+[network]
+method = "dhcp"
+hostname = "database"
+
+[disk]
+type = "zfs"
+size = "200G"
+
+[packages]
+list = [
+    "postgresql-server",
+    "postgresql-contrib",
+]
+
+[post_scripts]
+commands = [
+    "postgresql-setup --initdb",
+    "systemctl enable postgresql",
+]

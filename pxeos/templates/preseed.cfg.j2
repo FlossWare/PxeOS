@@ -1,0 +1,115 @@
+# PxeOS generated Preseed for Debian {{ profile.os_version }}
+# Profile: {{ profile.name }}
+
+### Localization
+d-i debian-installer/locale string {{ locale }}
+d-i keyboard-configuration/xkb-keymap select {{ keyboard_layout }}
+d-i console-setup/ask_detect boolean false
+
+### Network configuration
+{% if bootproto == "static" %}
+d-i netcfg/choose_interface select {{ interface }}
+d-i netcfg/disable_autoconfig boolean true
+d-i netcfg/get_ipaddress string {{ profile.network.get('ip', '') }}
+d-i netcfg/get_netmask string {{ profile.network.get('netmask', '255.255.255.0') }}
+d-i netcfg/get_gateway string {{ profile.network.get('gateway', '') }}
+d-i netcfg/get_nameservers string {{ nameservers | join(' ') }}
+d-i netcfg/confirm_static boolean true
+{% else %}
+d-i netcfg/choose_interface select {{ interface }}
+{% endif %}
+d-i netcfg/get_hostname string {{ hostname }}
+d-i netcfg/get_domain string {{ domain }}
+d-i netcfg/hostname string {{ hostname }}
+d-i hw-detect/load_firmware boolean true
+
+### Mirror settings
+d-i mirror/country string manual
+d-i mirror/http/hostname string {{ mirror_host }}
+d-i mirror/http/directory string {{ mirror_dir }}
+{% if mirror_proxy %}
+d-i mirror/http/proxy string {{ mirror_proxy }}
+{% else %}
+d-i mirror/http/proxy string
+{% endif %}
+
+### Account setup
+{% if rootpw_lock %}
+d-i passwd/root-login boolean false
+{% else %}
+d-i passwd/root-login boolean true
+d-i passwd/root-password-crypted password {{ profile.extra.get('rootpw_hash', '!') }}
+{% endif %}
+d-i passwd/user-fullname string {{ user_fullname }}
+d-i passwd/username string {{ username }}
+{% if profile.extra.get('user_password_hash') %}
+d-i passwd/user-password-crypted password {{ profile.extra['user_password_hash'] }}
+{% else %}
+d-i passwd/user-password-crypted password !
+{% endif %}
+d-i user-setup/allow-password-weak boolean true
+d-i user-setup/encrypt-home boolean false
+
+### Clock and time zone
+d-i clock-setup/utc boolean true
+d-i time/zone string {{ timezone }}
+d-i clock-setup/ntp boolean true
+
+### Partitioning
+{% if disk_method == "regular" %}
+d-i partman-auto/method string regular
+{% elif disk_method == "crypto" %}
+d-i partman-auto/method string crypto
+{% else %}
+d-i partman-auto/method string lvm
+d-i partman-auto-lvm/guided_size string max
+d-i partman-lvm/device_remove_lvm boolean true
+d-i partman-lvm/confirm boolean true
+d-i partman-lvm/confirm_nooverwrite boolean true
+{% endif %}
+d-i partman-md/device_remove_md boolean true
+d-i partman-auto/disk string {{ disk_device }}
+d-i partman-auto/choose_recipe select {{ disk_recipe }}
+d-i partman-partitioning/confirm_write_new_label boolean true
+d-i partman/choose_partition select finish
+d-i partman/confirm boolean true
+d-i partman/confirm_nooverwrite boolean true
+
+{% if profile.firmware.value == "uefi" %}
+d-i partman-efi/non_efi_system boolean true
+{% endif %}
+
+### Apt setup
+d-i apt-setup/non-free-firmware boolean true
+d-i apt-setup/non-free boolean true
+d-i apt-setup/contrib boolean true
+d-i apt-setup/use_mirror boolean true
+d-i apt-setup/services-select multiselect security, updates
+d-i apt-setup/security_host string security.debian.org
+
+### Package selection
+tasksel tasksel/first multiselect standard, ssh-server
+d-i pkgsel/include string {{ packages | join(' ') }}
+d-i pkgsel/upgrade select full-upgrade
+popularity-contest popularity-contest/participate boolean false
+
+### Boot loader
+d-i grub-installer/only_debian boolean true
+d-i grub-installer/with_other_os boolean true
+d-i grub-installer/bootdev string {{ disk_device }}
+
+### Finishing
+d-i finish-install/reboot_in_progress note
+d-i debian-installer/exit/poweroff boolean false
+
+### Late commands (post-install scripts)
+{% if post_scripts %}
+d-i preseed/late_command string \
+{% for script in post_scripts %}
+{% if not loop.last %}
+  in-target sh -c '{{ script | replace("'", "'\\''") }}'; \
+{% else %}
+  in-target sh -c '{{ script | replace("'", "'\\''") }}'
+{% endif %}
+{% endfor %}
+{% endif %}

@@ -1,0 +1,19 @@
+#!ipxe
+# PxeOS generated iPXE script
+# Profile: {{ profile.name }}
+
+dhcp
+echo Booting {{ menu_label }} via iPXE...
+
+set base-url {{ profile.install_url }}
+
+kernel {{ kernel }} {{ boot_args }}
+{% if initrd %}
+initrd {{ initrd }}
+{% endif %}
+boot || goto failed
+
+:failed
+echo Boot failed, retrying in 10 seconds...
+sleep 10
+goto start

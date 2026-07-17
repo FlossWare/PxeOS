@@ -1,0 +1,222 @@
+<?xml version="1.0"?>
+<!DOCTYPE profile>
+<!--
+  PxeOS generated AutoYaST profile for SUSE {{ profile.os_version }}
+  Profile: {{ profile.name }}
+-->
+<profile xmlns="http://www.suse.com/1.0/yast2ns"
+         xmlns:config="http://www.suse.com/1.0/configns">
+
+  <general>
+    <mode>
+      <confirm config:type="boolean">false</confirm>
+      <final_reboot config:type="boolean">true</final_reboot>
+    </mode>
+    <signature-handling>
+      <accept_unsigned_file config:type="boolean">true</accept_unsigned_file>
+      <accept_unknown_gpg_key config:type="boolean">true</accept_unknown_gpg_key>
+    </signature-handling>
+  </general>
+
+  {% if registration_key %}
+  <suse_register>
+    <do_registration config:type="boolean">true</do_registration>
+    <reg_code>{{ registration_key }}</reg_code>
+    {% if registration_email %}
+    <email>{{ registration_email }}</email>
+    {% endif %}
+  </suse_register>
+  {% endif %}
+
+  <language>
+    <language>{{ lang }}</language>
+    <languages>{{ lang }}</languages>
+  </language>
+
+  <keyboard>
+    <keymap>{{ keyboard }}</keymap>
+  </keyboard>
+
+  <timezone>
+    <hwclock>UTC</hwclock>
+    <timezone>{{ timezone }}</timezone>
+  </timezone>
+
+  <networking>
+    <keep_install_network config:type="boolean">true</keep_install_network>
+    <managed config:type="boolean">false</managed>
+    <dns>
+      <hostname>{{ hostname }}</hostname>
+      <domain>{{ domain }}</domain>
+      {% if nameservers %}
+      <nameservers config:type="list">
+        {% for ns in nameservers %}
+        <nameserver>{{ ns }}</nameserver>
+        {% endfor %}
+      </nameservers>
+      {% endif %}
+    </dns>
+    <interfaces config:type="list">
+      <interface>
+        <device>{{ device }}</device>
+        {% if bootproto == "static" %}
+        <bootproto>static</bootproto>
+        <ipaddr>{{ profile.network.get('ip', '') }}</ipaddr>
+        <netmask>{{ profile.network.get('netmask', '255.255.255.0') }}</netmask>
+        {% else %}
+        <bootproto>dhcp</bootproto>
+        {% endif %}
+        <startmode>auto</startmode>
+      </interface>
+    </interfaces>
+    {% if profile.network.get('gateway') %}
+    <routing>
+      <routes config:type="list">
+        <route>
+          <destination>default</destination>
+          <device>{{ device }}</device>
+          <gateway>{{ profile.network.get('gateway') }}</gateway>
+        </route>
+      </routes>
+    </routing>
+    {% endif %}
+  </networking>
+
+  {% if firewall_enable %}
+  <firewall>
+    <enable_firewall config:type="boolean">true</enable_firewall>
+    <start_firewall config:type="boolean">true</start_firewall>
+    <FW_SERVICES_EXT_TCP>ssh</FW_SERVICES_EXT_TCP>
+  </firewall>
+  {% else %}
+  <firewall>
+    <enable_firewall config:type="boolean">false</enable_firewall>
+    <start_firewall config:type="boolean">false</start_firewall>
+  </firewall>
+  {% endif %}
+
+  <users config:type="list">
+    <user>
+      <username>root</username>
+      <user_password>!</user_password>
+      <encrypted config:type="boolean">true</encrypted>
+    </user>
+    {% if profile.extra.get('username') %}
+    <user>
+      <username>{{ profile.extra['username'] }}</username>
+      {% if profile.extra.get('user_password_hash') %}
+      <user_password>{{ profile.extra['user_password_hash'] }}</user_password>
+      <encrypted config:type="boolean">true</encrypted>
+      {% else %}
+      <user_password>!</user_password>
+      <encrypted config:type="boolean">true</encrypted>
+      {% endif %}
+      <fullname>{{ profile.extra.get('user_fullname', '') }}</fullname>
+    </user>
+    {% endif %}
+  </users>
+
+  <services-manager>
+    <default_target>multi-user</default_target>
+    <services>
+      <enable config:type="list">
+        <service>sshd</service>
+        <service>chronyd</service>
+      </enable>
+    </services>
+  </services-manager>
+
+  <partitioning config:type="list">
+    {% if disk_partitions %}
+    <drive>
+      <device>{{ disk_device }}</device>
+      <initialize config:type="boolean">true</initialize>
+      {% if use_lvm %}
+      <type config:type="symbol">CT_LVM</type>
+      {% endif %}
+      <use>all</use>
+      <partitions config:type="list">
+        {% for part in disk_partitions %}
+        <partition>
+          <mount>{{ part.get('mount', '/') }}</mount>
+          <filesystem config:type="symbol">{{ part.get('fstype', 'btrfs') }}</filesystem>
+          {% if part.get('size') %}
+          <size>{{ part['size'] }}</size>
+          {% else %}
+          <size>max</size>
+          {% endif %}
+          {% if part.get('lv_name') %}
+          <lv_name>{{ part['lv_name'] }}</lv_name>
+          {% endif %}
+        </partition>
+        {% endfor %}
+      </partitions>
+    </drive>
+    {% else %}
+    <drive>
+      <device>{{ disk_device }}</device>
+      <initialize config:type="boolean">true</initialize>
+      <use>all</use>
+      <partitions config:type="list">
+        {% if profile.firmware.value == "uefi" %}
+        <partition>
+          <mount>/boot/efi</mount>
+          <size>512M</size>
+          <filesystem config:type="symbol">vfat</filesystem>
+          <partition_id config:type="integer">259</partition_id>
+        </partition>
+        {% endif %}
+        <partition>
+          <mount>/boot</mount>
+          <size>1G</size>
+          <filesystem config:type="symbol">ext4</filesystem>
+        </partition>
+        <partition>
+          <mount>swap</mount>
+          <size>2G</size>
+          <filesystem config:type="symbol">swap</filesystem>
+        </partition>
+        <partition>
+          <mount>/</mount>
+          <size>max</size>
+          <filesystem config:type="symbol">btrfs</filesystem>
+        </partition>
+      </partitions>
+    </drive>
+    {% endif %}
+  </partitioning>
+
+  <software>
+    <install_recommended config:type="boolean">true</install_recommended>
+    <patterns config:type="list">
+      <pattern>base</pattern>
+      <pattern>enhanced_base</pattern>
+    </patterns>
+    {% if packages %}
+    <packages config:type="list">
+      {% for pkg in packages %}
+      <package>{{ pkg }}</package>
+      {% endfor %}
+    </packages>
+    {% endif %}
+  </software>
+
+  {% if post_scripts %}
+  <scripts>
+    <post-scripts config:type="list">
+      {% for script in post_scripts %}
+      <script>
+        <filename>pxeos-post-{{ loop.index }}.sh</filename>
+        <interpreter>shell</interpreter>
+        <source><![CDATA[
+#!/bin/bash
+set -euo pipefail
+{{ script }}
+]]></source>
+      </script>
+      {% endfor %}
+    </post-scripts>
+  </scripts>
+  {% endif %}
+
+</profile>

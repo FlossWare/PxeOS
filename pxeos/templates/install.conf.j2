@@ -1,0 +1,80 @@
+#
+# OpenBSD autoinstall(8) response file
+# Profile: {{ hostname }}
+#
+# Each line answers an installer question in the form:
+#   Question = Answer
+#
+
+# --------------- System ---------------
+System hostname = {{ hostname }}.{{ domain }}
+Password for root account = {{ root_password }}
+{% if profile.extra.get('public_ssh_key') %}
+Public ssh key for root account = {{ profile.extra['public_ssh_key'] }}
+{% endif %}
+
+# --------------- Network ---------------
+Network interfaces = {{ iface }}
+{% if use_dhcp %}
+IPv4 address for {{ iface }} = dhcp
+{% else %}
+IPv4 address for {{ iface }} = {{ ipv4 }}
+Netmask for {{ iface }} = {{ netmask }}
+{% endif %}
+{% if gateway and gateway != 'none' %}
+Default IPv4 route = {{ gateway }}
+{% else %}
+Default IPv4 route = none
+{% endif %}
+DNS domain name = {{ domain }}
+{% if nameservers %}
+DNS nameservers = {{ nameservers | join(' ') }}
+{% endif %}
+
+# --------------- User ---------------
+{% if username %}
+Setup a user = {{ username }}
+Full name for user {{ username }} = {{ username }}
+Password for user {{ username }} = {{ user_password }}
+{% else %}
+Setup a user = no
+{% endif %}
+
+# --------------- Time ---------------
+What timezone are you in = {{ timezone }}
+
+# --------------- Disk ---------------
+Which disk is the root disk = {{ disk_device }}
+{% if disk_layout == 'whole' %}
+Use (W)hole disk MBR, whole disk (G)PT or (E)dit = W
+{% elif disk_layout == 'gpt' %}
+Use (W)hole disk MBR, whole disk (G)PT or (E)dit = G
+{% else %}
+Use (W)hole disk MBR, whole disk (G)PT or (E)dit = W
+{% endif %}
+URL to autopartitioning template for disklabel = no
+Use DUIDs rather than device names in fstab = yes
+
+# --------------- Sets ---------------
+{% if install_url %}
+Location of sets = http
+HTTP Server = {{ http_server }}
+Server directory = {{ server_directory }}
+{% else %}
+Location of sets = cd0
+{% endif %}
+Set name(s) = {{ selected_sets | join(' ') }}
+{% if not x11 %}
+Set name(s) = -x*
+{% endif %}
+
+# --------------- Install ---------------
+Continue without verification = yes
+Allow root ssh login = {% if profile.extra.get('root_ssh', True) %}yes{% else %}no{% endif %}
+
+{% if profile.extra.get('sysctl') %}
+# --------------- Sysctl ---------------
+{% for key, value in profile.extra['sysctl'].items() %}
+sysctl {{ key }}={{ value }}
+{% endfor %}
+{% endif %}

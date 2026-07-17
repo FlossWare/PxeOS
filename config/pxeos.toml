@@ -1,0 +1,15 @@
+[server]
+host = "0.0.0.0"
+port = 8443
+tls_cert = "/etc/pxeos/tls/cert.pem"
+tls_key = "/etc/pxeos/tls/key.pem"
+
+[paths]
+tftp_root = "/var/lib/tftpboot/pxeos"
+distro_root = "/var/lib/pxeos/distros"
+data_dir = "/var/lib/pxeos"
+
+[defaults]
+os = "debian"
+version = "12"
+profile = "base"

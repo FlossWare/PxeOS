@@ -1,0 +1,16 @@
+# PxeOS generated GRUB2 configuration (UEFI)
+# Profile: {{ profile.name }}
+
+set default=0
+set timeout=5
+
+menuentry "{{ menu_label }}" {
+  linuxefi {{ kernel }} {{ boot_args }}
+{% if initrd %}
+  initrdefi {{ initrd }}
+{% endif %}
+}
+
+menuentry "Boot from local disk" {
+  exit
+}

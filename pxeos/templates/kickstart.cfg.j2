@@ -1,0 +1,111 @@
+#version=RHEL
+# PxeOS generated Kickstart for {{ profile.os_family }} {{ profile.os_version }}
+# Profile: {{ profile.name }}
+
+# Installation source
+url --url="{{ install_url }}"
+
+# System language and keyboard
+lang {{ lang }}
+keyboard --vckeymap={{ keyboard }} --xlayouts='{{ keyboard }}'
+
+# Timezone
+timezone {{ timezone }} --utc
+
+# Root password
+{% if rootpw_lock %}
+rootpw --lock
+{% else %}
+rootpw --iscrypted {{ profile.extra.get('rootpw_hash', '!!') }}
+{% endif %}
+
+# SELinux
+{% if selinux == "disabled" %}
+selinux --disabled
+{% elif selinux == "permissive" %}
+selinux --permissive
+{% else %}
+selinux --enforcing
+{% endif %}
+
+# Firewall
+{% if firewall %}
+firewall --enabled --ssh
+{% else %}
+firewall --disabled
+{% endif %}
+
+# Network
+{% if bootproto == "static" %}
+network --bootproto=static --device={{ device }} --ip={{ profile.network.get('ip', '') }} --netmask={{ profile.network.get('netmask', '255.255.255.0') }} --gateway={{ profile.network.get('gateway', '') }} --hostname={{ hostname }}{% if nameservers %} --nameserver={{ nameservers | join(',') }}{% endif %} --activate
+{% else %}
+network --bootproto=dhcp --device={{ device }} --hostname={{ hostname }} --activate
+{% endif %}
+network --hostname={{ hostname }}
+
+# System services
+services --enabled="sshd,chronyd"
+
+# Do not configure X
+skipx
+
+# System bootloader
+{% if profile.firmware.value == "uefi" %}
+bootloader --append="crashkernel=auto" --location=mbr --boot-drive={{ profile.disk.get('device', 'sda') | replace('/dev/', '') }}
+{% else %}
+bootloader --append="crashkernel=auto" --location=mbr
+{% endif %}
+
+# Disk partitioning
+{% if disk_method == "auto" %}
+autopart --type=lvm
+clearpart --all --initlabel
+{% elif disk_method == "custom" and disk_partitions %}
+clearpart --all --initlabel{% if disk_device %} --drives={{ disk_device | replace('/dev/', '') }}{% endif %}
+
+{% for part in disk_partitions %}
+{% if part.get('type') == 'pv' %}
+part pv.{{ loop.index }} --fstype="lvmpv" --ondisk={{ part.get('disk', disk_device | replace('/dev/', '')) }} --size={{ part.get('size', 1) }}{% if part.get('grow') %} --grow{% endif %}
+
+{% elif part.get('type') == 'volgroup' %}
+volgroup {{ part.get('name', 'vg_system') }} pv.{{ part.get('pv', 1) }}
+{% elif part.get('type') == 'logvol' %}
+logvol {{ part.get('mount', '/') }} --vgname={{ part.get('vg', 'vg_system') }} --fstype="{{ part.get('fstype', 'xfs') }}" --size={{ part.get('size', 1024) }} --name={{ part.get('name', 'lv_root') }}{% if part.get('grow') %} --grow{% endif %}
+
+{% else %}
+part {{ part.get('mount', '/boot') }} --fstype="{{ part.get('fstype', 'xfs') }}" --ondisk={{ part.get('disk', disk_device | replace('/dev/', '')) }} --size={{ part.get('size', 1024) }}
+{% endif %}
+{% endfor %}
+{% else %}
+autopart --type=lvm
+clearpart --all --initlabel
+{% endif %}
+
+# Reboot after installation
+{% if reboot %}
+reboot --eject
+{% else %}
+halt
+{% endif %}
+
+%packages
+@^minimal-environment
+@standard
+{% for pkg in packages %}
+{{ pkg }}
+{% endfor %}
+%end
+
+%post --log=/root/pxeos-post.log
+#!/bin/bash
+set -euo pipefail
+
+echo "PxeOS post-install started: $(date)"
+
+{% for script in post_scripts %}
+# Post script {{ loop.index }}
+{{ script }}
+
+{% endfor %}
+echo "PxeOS post-install completed: $(date)"
+%end

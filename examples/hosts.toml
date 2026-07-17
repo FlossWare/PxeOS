@@ -1,0 +1,70 @@
+[defaults]
+os_family = "debian"
+vendor = "debian"
+os_version = "12"
+profile = "base"
+
+[[hosts]]
+mac = "aa:bb:cc:dd:ee:f1"
+profile = "webserver"
+os_family = "fedora"
+vendor = "fedora"
+os_version = "42"
+priority = 10
+
+[[hosts]]
+mac = "aa:bb:cc:dd:ee:f2"
+profile = "database"
+os_family = "freebsd"
+vendor = "freebsd"
+os_version = "14.2"
+priority = 10
+
+[[hosts]]
+hostname_pattern = "web-*"
+profile = "webserver"
+os_family = "fedora"
+vendor = "fedora"
+os_version = "42"
+priority = 50
+
+[[hosts]]
+hostname_pattern = "rhel-*"
+profile = "webserver"
+os_family = "fedora"
+vendor = "rhel"
+os_version = "9"
+priority = 50
+
+[[hosts]]
+hostname_pattern = "db-*"
+profile = "database"
+os_family = "freebsd"
+vendor = "freebsd"
+os_version = "14.2"
+priority = 50
+
+[[hosts]]
+hostname_pattern = "win-*"
+profile = "desktop"
+os_family = "windows"
+vendor = "windows"
+os_version = "11"
+priority = 50
+
+[[hosts]]
+subnet = "10.0.5.0/24"
+group = "lab"
+profile = "minimal"
+os_family = "arch"
+vendor = "arch"
+os_version = "latest"
+priority = 100
+
+[[hosts]]
+group = "bsd-cluster"
+profile = "server"
+os_family = "openbsd"
+vendor = "openbsd"
+os_version = "7.6"
+priority = 100

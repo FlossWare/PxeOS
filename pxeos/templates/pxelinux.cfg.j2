@@ -1,0 +1,22 @@
+# PxeOS generated PXELINUX configuration (BIOS)
+# Profile: {{ profile.name }}
+
+DEFAULT install
+PROMPT 0
+TIMEOUT 50
+
+MENU TITLE PxeOS Boot Menu
+
+LABEL install
+  MENU LABEL {{ menu_label }}
+  MENU DEFAULT
+  KERNEL {{ kernel }}
+{% if initrd %}
+  APPEND initrd={{ initrd }} {{ boot_args }}
+{% else %}
+  APPEND {{ boot_args }}
+{% endif %}
+
+LABEL local
+  MENU LABEL Boot from local disk
+  LOCALBOOT 0

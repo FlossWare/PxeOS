@@ -1,0 +1,29 @@
+[profile]
+name = "webserver"
+os_family = "fedora"
+vendor = "fedora"
+os_version = "42"
+
+[network]
+method = "dhcp"
+hostname = "webserver"
+
+[disk]
+type = "lvm"
+size = "50G"
+
+[packages]
+list = [
+    "nginx",
+    "certbot",
+    "firewalld",
+    "fail2ban",
+]
+
+[post_scripts]
+commands = [
+    "systemctl enable nginx",
+    "systemctl enable firewalld",
+    "firewall-cmd --permanent --add-service=http",
+    "firewall-cmd --permanent --add-service=https",
+]
