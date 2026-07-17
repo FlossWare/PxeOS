@@ -11,6 +11,7 @@ import json
 import os
 import re
 import stat
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import asdict, fields
 from pathlib import Path
@@ -126,24 +127,30 @@ class EnvironmentSecretsProvider(SecretsProvider):
     ``PXEOS_SECRET_ROOT_PASSWORD``.
     """
 
+    _lock = threading.Lock()
+
     def get(self, key: str) -> Optional[str]:
         env_key = _ENV_PREFIX + key.upper()
-        return os.environ.get(env_key)
+        with self._lock:
+            return os.environ.get(env_key)
 
     def set(self, key: str, value: str) -> None:
         env_key = _ENV_PREFIX + key.upper()
-        os.environ[env_key] = value
+        with self._lock:
+            os.environ[env_key] = value
 
     def delete(self, key: str) -> None:
         env_key = _ENV_PREFIX + key.upper()
-        os.environ.pop(env_key, None)
+        with self._lock:
+            os.environ.pop(env_key, None)
 
     def list_keys(self) -> List[str]:
-        keys: List[str] = []
-        for name in os.environ:
-            if name.startswith(_ENV_PREFIX):
-                keys.append(name[len(_ENV_PREFIX):])
-        return sorted(keys)
+        with self._lock:
+            keys: List[str] = []
+            for name in os.environ:
+                if name.startswith(_ENV_PREFIX):
+                    keys.append(name[len(_ENV_PREFIX):])
+            return sorted(keys)
 
 
 # ---------------------------------------------------------------------------

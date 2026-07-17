@@ -241,3 +241,31 @@ class TestProfileLoading:
         assert profile_arg.name == "missing-profile"
         assert profile_arg.os_family == "fedora"
         assert profile_arg.os_version == "41"
+
+    def test_rejects_path_traversal_in_profile_name(self):
+        rule = _rule(profile="../../etc/passwd")
+        assets = _boot_assets()
+        plugin = MagicMock()
+        plugin.validate_profile.return_value = []
+        plugin.boot_assets.return_value = assets
+
+        engine, _, _ = _build_engine(
+            matcher_return=rule, plugin=plugin
+        )
+
+        with pytest.raises(ValueError, match="invalid profile name"):
+            engine.provision(mac="aa:bb:cc:dd:ee:ff")
+
+    def test_rejects_slash_in_profile_name(self):
+        rule = _rule(profile="sub/dir")
+        assets = _boot_assets()
+        plugin = MagicMock()
+        plugin.validate_profile.return_value = []
+        plugin.boot_assets.return_value = assets
+
+        engine, _, _ = _build_engine(
+            matcher_return=rule, plugin=plugin
+        )
+
+        with pytest.raises(ValueError, match="invalid profile name"):
+            engine.provision(mac="aa:bb:cc:dd:ee:ff")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pxeos.models import (
     BootAssets,
@@ -138,6 +139,13 @@ class DragonFlyBSDPlugin(OSPlugin):
             errors.append(
                 "install_url is required for DragonFlyBSD "
                 "(HTTP/FTP path to distribution sets)"
+            )
+        elif urlparse(profile.install_url).scheme not in (
+            "http", "https", "ftp", "nfs",
+        ):
+            errors.append(
+                f"install_url must be http://, https://, "
+                f"ftp://, or nfs:// (got {profile.install_url!r})"
             )
 
         disk = profile.disk or {}

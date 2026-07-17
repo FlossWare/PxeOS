@@ -156,11 +156,21 @@ class ProvisioningEngine:
     def _load_profile_for_rule(
         self, rule: HostRule
     ) -> ProvisionProfile:
-        profile_path = (
-            self._config.data_dir
-            / "profiles"
-            / f"{rule.profile}.toml"
+        if ".." in rule.profile or "/" in rule.profile:
+            raise ValueError(
+                f"invalid profile name: {rule.profile!r}"
+            )
+        profiles_dir = (
+            self._config.data_dir / "profiles"
         )
+        profile_path = profiles_dir / f"{rule.profile}.toml"
+        if (
+            profile_path.resolve().parent
+            != profiles_dir.resolve()
+        ):
+            raise ValueError(
+                f"invalid profile name: {rule.profile!r}"
+            )
         if profile_path.exists():
             return load_profile(profile_path)
 
