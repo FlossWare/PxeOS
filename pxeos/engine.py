@@ -6,7 +6,11 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from pxeos.cache import ttl_cache
+from pxeos.cache import (
+    TTLCacheWrapper,
+    profile_cache_key,
+    ttl_cache,
+)
 from pxeos.config import PxeOSConfig, load_profile
 from pxeos.matcher import HostMatcher
 from pxeos.models import BootAssets, HostRule, ProvisionProfile
@@ -39,6 +43,13 @@ class ProvisioningEngine:
         self._matcher = matcher
         self._config = config
         self.tracker = tracker or ProvisionTracker()
+        # Rendered-output caches keyed on (mac, profile_content_hash)
+        self._ipxe_cache = TTLCacheWrapper(
+            "ipxe_script", maxsize=256, ttl=300.0,
+        )
+        self._autoinstall_cache = TTLCacheWrapper(
+            "autoinstall", maxsize=256, ttl=300.0,
+        )
 
     def provision(
         self,
@@ -100,6 +111,17 @@ class ProvisioningEngine:
             return LOCAL_BOOT_SCRIPT
 
         rule = self._resolve_rule(mac)
+        profile_path = self._profile_path_for_rule(rule)
+        phash = profile_cache_key(profile_path) if profile_path else "none"
+        cache_key = (mac, rule.profile, phash)
+
+        cached = self._ipxe_cache.get(cache_key)
+        if cached is not None:
+            # Still need to update state tracking even on cache hit
+            self._ensure_tracked(mac, rule)
+            self.tracker.transition(mac, ProvisionState.BOOTING)
+            return cached
+
         profile = self._load_profile_for_rule(rule)
         plugin = self._registry.get(rule.os_family)
         is_live = profile.extra.get("live", False)
@@ -110,13 +132,7 @@ class ProvisioningEngine:
             assets = plugin.boot_assets(profile)
 
         # Register if not tracked, then transition to BOOTING
-        if self.tracker.get(mac) is None:
-            self.tracker.register(
-                mac=mac,
-                profile=rule.profile,
-                os_family=rule.os_family,
-                os_version=rule.os_version,
-            )
+        self._ensure_tracked(mac, rule)
         self.tracker.transition(mac, ProvisionState.BOOTING)
         logger.info(
             "Boot script generated mac=%s profile=%s os=%s/%s",
@@ -141,28 +157,61 @@ class ProvisioningEngine:
         lines.append(f"boot {' '.join(args)}")
         lines.append("")
 
-        return "\n".join(lines)
+        script = "\n".join(lines)
+        self._ipxe_cache.put(cache_key, script)
+        return script
 
     def get_autoinstall(self, mac: str) -> str:
         rule = self._resolve_rule(mac)
+        profile_path = self._profile_path_for_rule(rule)
+        phash = profile_cache_key(profile_path) if profile_path else "none"
+        cache_key = (mac, rule.profile, phash)
+
+        cached = self._autoinstall_cache.get(cache_key)
+        if cached is not None:
+            self._ensure_tracked(mac, rule)
+            self.tracker.transition(mac, ProvisionState.INSTALLING)
+            return cached
+
         profile = self._load_profile_for_rule(rule)
         plugin = self._registry.get(rule.os_family)
 
         # Register if not tracked, then transition to INSTALLING
-        if self.tracker.get(mac) is None:
-            self.tracker.register(
-                mac=mac,
-                profile=rule.profile,
-                os_family=rule.os_family,
-                os_version=rule.os_version,
-            )
+        self._ensure_tracked(mac, rule)
         self.tracker.transition(mac, ProvisionState.INSTALLING)
         logger.info(
             "Autoinstall requested mac=%s state=installing",
             mac,
         )
 
-        return plugin.generate_autoinstall(profile)
+        content = plugin.generate_autoinstall(profile)
+        self._autoinstall_cache.put(cache_key, content)
+        return content
+
+    def invalidate_caches(self, mac: Optional[str] = None) -> int:
+        """Invalidate rendered-output caches.
+
+        If *mac* is provided only entries for that MAC are removed.
+        Otherwise all entries in both rendered-output caches are cleared
+        (the profile_loader TTL cache is also cleared).
+
+        Returns the number of entries removed.
+        """
+        removed = 0
+        if mac is None:
+            removed += self._ipxe_cache.size
+            removed += self._autoinstall_cache.size
+            self._ipxe_cache.clear()
+            self._autoinstall_cache.clear()
+            _cached_load_profile.cache_clear()
+        else:
+            # Scan for keys that contain this MAC (atomic scan+remove)
+            def _matches_mac(key):
+                return isinstance(key, tuple) and len(key) >= 1 and key[0] == mac
+
+            for cache in (self._ipxe_cache, self._autoinstall_cache):
+                removed += cache.invalidate_matching(_matches_mac)
+        return removed
 
     def get_rule(
         self,
@@ -181,6 +230,16 @@ class ProvisioningEngine:
             groups=groups,
             arch=arch,
         )
+
+    def _ensure_tracked(self, mac: str, rule: HostRule) -> None:
+        """Register a provisioning record if one does not exist yet."""
+        if self.tracker.get(mac) is None:
+            self.tracker.register(
+                mac=mac,
+                profile=rule.profile,
+                os_family=rule.os_family,
+                os_version=rule.os_version,
+            )
 
     def _resolve_rule(
         self,
@@ -204,6 +263,18 @@ class ProvisioningEngine:
                 f"no matching host rule for MAC {mac!r}"
             )
         return rule
+
+    def _profile_path_for_rule(
+        self, rule: HostRule
+    ) -> Optional[str]:
+        """Return the on-disk path for the profile, or None."""
+        if ".." in rule.profile or "/" in rule.profile:
+            return None
+        profiles_dir = self._config.data_dir / "profiles"
+        profile_path = profiles_dir / f"{rule.profile}.toml"
+        if profile_path.exists():
+            return str(profile_path)
+        return None
 
     def _load_profile_for_rule(
         self, rule: HostRule

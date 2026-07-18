@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import functools
+import hashlib
+import logging
 import threading
 import time
-from typing import Any, Callable, Dict, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
+logger = logging.getLogger("pxeos.cache")
 
 
 class CacheStats:
@@ -28,6 +33,21 @@ class CacheStats:
     def eviction(self) -> None:
         with self._lock:
             self._evictions += 1
+
+    @property
+    def hits(self) -> int:
+        with self._lock:
+            return self._hits
+
+    @property
+    def misses(self) -> int:
+        with self._lock:
+            return self._misses
+
+    @property
+    def evictions(self) -> int:
+        with self._lock:
+            return self._evictions
 
     def to_dict(self) -> Dict[str, Any]:
         with self._lock:
@@ -109,16 +129,51 @@ class TTLCacheWrapper:
 
             self._cache[key] = (time.monotonic(), value)
 
+    def invalidate(self, key: Any) -> bool:
+        """Remove a specific key from cache. Returns True if removed."""
+        with self._lock:
+            if key in self._cache:
+                del self._cache[key]
+                self._stats.eviction()
+                _global_stats.eviction()
+                return True
+            return False
+
+    def invalidate_matching(self, predicate: Callable[[Any], bool]) -> int:
+        """Remove all entries whose key satisfies *predicate*.
+
+        The scan and removal are performed atomically under the
+        cache lock so no concurrent modification can intervene.
+
+        Returns the number of entries removed.
+        """
+        removed = 0
+        with self._lock:
+            to_remove = [k for k in self._cache if predicate(k)]
+            for key in to_remove:
+                del self._cache[key]
+                self._stats.eviction()
+                _global_stats.eviction()
+                removed += 1
+        return removed
+
     def clear(self) -> None:
         """Clear all cached entries."""
         with self._lock:
             self._cache.clear()
 
     @property
+    def size(self) -> int:
+        """Current number of entries in cache."""
+        with self._lock:
+            return len(self._cache)
+
+    @property
     def stats(self) -> Dict[str, Any]:
         result = self._stats.to_dict()
         result["name"] = self.name
-        result["size"] = len(self._cache)
+        with self._lock:
+            result["size"] = len(self._cache)
         result["maxsize"] = self.maxsize
         result["ttl"] = self.ttl
         return result
@@ -177,6 +232,47 @@ def ttl_cache(
     return decorator
 
 
+def profile_cache_key(profile_path: str) -> str:
+    """Compute a content-based hash for a profile file.
+
+    Returns a hex digest of the file contents so cache entries
+    can be keyed on (mac, profile_hash) and automatically
+    invalidated when the underlying profile changes on disk.
+    """
+    try:
+        data = Path(profile_path).read_bytes()
+        return hashlib.sha256(data).hexdigest()[:16]
+    except (OSError, IOError):
+        return "missing"
+
+
+def warm_profiles(profiles_dir: Path) -> int:
+    """Pre-load all profile TOML files into the profile_loader cache.
+
+    Call this at application startup to eliminate cold-start latency
+    for the first PXE boot request of each profile.
+
+    Returns the number of profiles loaded.
+    """
+    from pxeos.engine import _cached_load_profile
+
+    count = 0
+    if not profiles_dir.is_dir():
+        return count
+
+    for toml_file in sorted(profiles_dir.glob("*.toml")):
+        try:
+            _cached_load_profile(str(toml_file))
+            count += 1
+            logger.info("Warmed cache for profile %s", toml_file.name)
+        except Exception as exc:
+            logger.warning(
+                "Failed to warm cache for %s: %s",
+                toml_file.name, exc,
+            )
+    return count
+
+
 def get_all_cache_stats() -> Dict[str, Any]:
     """Return statistics for all registered TTL caches."""
     with _registry_lock:
@@ -198,3 +294,9 @@ def clear_all_caches() -> int:
             wrapper.clear()
     _global_stats.reset()
     return count
+
+
+def get_cache(name: str) -> Optional[TTLCacheWrapper]:
+    """Look up a registered cache by name."""
+    with _registry_lock:
+        return _cache_registry.get(name)
