@@ -9,9 +9,13 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.middleware.base import (
+    BaseHTTPMiddleware,
+    RequestResponseEndpoint,
+)
 
 from pxeos.config import PxeOSConfig, load_hosts
 from pxeos.engine import ProvisioningEngine
@@ -36,6 +40,42 @@ app = FastAPI(
 _engine: Optional[ProvisioningEngine] = None
 _registry: Optional[PluginRegistry] = None
 _config: Optional[PxeOSConfig] = None
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log every request: method, path, status code, and duration."""
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        start = time.monotonic()
+        response = await call_next(request)
+        duration_ms = (time.monotonic() - start) * 1000
+
+        client_ip = "unknown"
+        if request.client is not None:
+            client_ip = request.client.host
+
+        logger.info(
+            "%s %s %d %.1fms ip=%s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+            client_ip,
+        )
+        return response
+
+
+# Register middleware at module level so it is in place before
+# any TestClient or uvicorn starts the ASGI app.  Both are
+# no-ops until init_app() calls configure_rate_limiting().
+from pxeos.rate_limit import RateLimitMiddleware  # noqa: E402
+
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(RateLimitMiddleware)
 
 
 class HostRuleRequest(BaseModel):
@@ -135,6 +175,21 @@ def init_app(
             f"via the API or CLI.\n",
             file=sys.stderr,
         )
+
+    # Configure rate limiting (middleware is already registered
+    # at module level; this call sets limits and enables/disables).
+    from pxeos.rate_limit import configure_rate_limiting
+
+    rl = config.rate_limit
+    configure_rate_limiting(
+        enabled=rl.enabled,
+        pxe_rpm=rl.pxe_requests_per_minute,
+        pxe_burst=rl.pxe_burst,
+        api_rpm=rl.api_requests_per_minute,
+        api_burst=rl.api_burst,
+        auth_rpm=rl.auth_requests_per_minute,
+        auth_burst=rl.auth_burst,
+    )
 
     from pxeos.web.routes import router as web_router
     app.include_router(web_router)
