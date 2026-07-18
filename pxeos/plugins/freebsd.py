@@ -85,6 +85,7 @@ class FreeBSDPlugin(OSPlugin):
             "post_scripts": profile.post_scripts,
             "install_url": profile.install_url,
         }
+        self._sanitize_context(context)
         return self._render_template(
             "installerconfig.j2", context
         )

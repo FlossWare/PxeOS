@@ -126,6 +126,7 @@ class WindowsPlugin(OSPlugin):
             "packages": profile.packages,
             "post_scripts": profile.post_scripts,
         }
+        self._sanitize_context(context)
         return self._render_template(
             "unattend.xml.j2", context
         )

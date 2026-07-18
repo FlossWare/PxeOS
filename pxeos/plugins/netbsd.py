@@ -106,6 +106,7 @@ class NetBSDPlugin(OSPlugin):
             "packages": profile.packages,
             "post_scripts": profile.post_scripts,
         }
+        self._sanitize_context(context)
         return self._render_template(
             "netbsd-auto.j2", context
         )

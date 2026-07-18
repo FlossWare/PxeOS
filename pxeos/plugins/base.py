@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import List
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from pxeos.models import BootAssets, DistroAssets, ProvisionProfile
+from pxeos.validation import (
+    sanitize_hostname,
+    sanitize_packages,
+    sanitize_shell_value,
+    validate_hostname,
+    validate_url,
+)
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 
@@ -79,12 +87,36 @@ class OSPlugin(ABC):
             )
         return errors
 
+    def _sanitize_context(self, context: dict) -> dict:
+        """Validate and sanitize common template context values.
+
+        Checks hostname, install_url, and packages for injection
+        risks.  Raises ``ValueError`` if any value is unsafe.
+        """
+        if "hostname" in context and context["hostname"]:
+            sanitize_hostname(context["hostname"])
+        if "install_url" in context and context["install_url"]:
+            if not validate_url(context["install_url"]):
+                raise ValueError(
+                    f"invalid install_url: "
+                    f"{context['install_url']!r}"
+                )
+        if "packages" in context:
+            sanitize_packages(context["packages"])
+        return context
+
     def _render_template(
         self, template_name: str, context: dict
     ) -> str:
+        # Enable autoescape for XML templates to prevent
+        # XML injection attacks.
+        autoescape_exts = ["xml", "xml.j2"]
         env = Environment(
             loader=FileSystemLoader(str(_TEMPLATE_DIR)),
-            autoescape=select_autoescape([]),
+            autoescape=select_autoescape(
+                enabled_extensions=autoescape_exts,
+                default_for_string=False,
+            ),
             keep_trailing_newline=True,
             trim_blocks=True,
             lstrip_blocks=True,

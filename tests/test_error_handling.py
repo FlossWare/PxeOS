@@ -23,38 +23,25 @@ class TestMacValidation:
     """Tests for MAC address validation helper."""
 
     def test_valid_colon_separated(self):
-        valid, err = validate_mac("aa:bb:cc:dd:ee:ff")
-        assert valid is True
-        assert err == ""
+        assert validate_mac("aa:bb:cc:dd:ee:ff") is True
 
     def test_valid_dash_separated(self):
-        valid, err = validate_mac("AA-BB-CC-DD-EE-FF")
-        assert valid is True
-        assert err == ""
+        assert validate_mac("AA-BB-CC-DD-EE-FF") is True
 
     def test_valid_mixed_case(self):
-        valid, err = validate_mac("aA:bB:cC:dD:eE:fF")
-        assert valid is True
-        assert err == ""
+        assert validate_mac("aA:bB:cC:dD:eE:fF") is True
+
+    def test_valid_bare_hex(self):
+        assert validate_mac("aabbccddeeff") is True
 
     def test_invalid_too_short(self):
-        valid, err = validate_mac("aa:bb:cc")
-        assert valid is False
-        assert "invalid MAC address format" in err
+        assert validate_mac("aa:bb:cc") is False
 
     def test_invalid_bad_chars(self):
-        valid, err = validate_mac("gg:hh:ii:jj:kk:ll")
-        assert valid is False
-        assert "invalid MAC address format" in err
-
-    def test_invalid_no_separators(self):
-        valid, err = validate_mac("aabbccddeeff")
-        assert valid is False
-        assert "invalid MAC address format" in err
+        assert validate_mac("gg:hh:ii:jj:kk:ll") is False
 
     def test_invalid_empty(self):
-        valid, err = validate_mac("")
-        assert valid is False
+        assert validate_mac("") is False
 
     def test_normalize_lowercase_colon(self):
         assert normalize_mac("AA-BB-CC-DD-EE-FF") == "aa:bb:cc:dd:ee:ff"

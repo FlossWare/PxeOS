@@ -78,6 +78,7 @@ class DebianPlugin(OSPlugin):
             ),
             "username": profile.extra.get("username", "admin"),
         }
+        self._sanitize_context(context)
         return self._render_template("preseed.cfg.j2", context)
 
     def boot_assets(

@@ -79,6 +79,7 @@ class SUSEPlugin(OSPlugin):
                 "firewall", True
             ),
         }
+        self._sanitize_context(context)
         return self._render_template("autoyast.xml.j2", context)
 
     def boot_assets(

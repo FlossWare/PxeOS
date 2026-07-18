@@ -137,9 +137,12 @@ def _validate_mac_param(mac: str) -> str:
     Raises HTTPException 422 on invalid format.  Returns the
     normalized (lowercase, colon-separated) MAC string.
     """
-    valid, err = validate_mac(mac)
-    if not valid:
-        raise HTTPException(422, err)
+    if not validate_mac(mac):
+        raise HTTPException(
+            422,
+            f"invalid MAC address format: {mac!r}. "
+            "Expected format: xx:xx:xx:xx:xx:xx",
+        )
     return normalize_mac(mac)
 
 
@@ -303,9 +306,11 @@ def register_host(rule: HostRuleRequest) -> Dict[str, Any]:
 
     # Validate MAC format if provided
     if rule.mac:
-        valid, err = validate_mac(rule.mac)
-        if not valid:
-            raise HTTPException(422, err)
+        if not validate_mac(rule.mac):
+            raise HTTPException(
+                422,
+                f"invalid MAC address format: {rule.mac!r}",
+            )
         rule.mac = normalize_mac(rule.mac)
 
     hosts_file = _config.data_dir / "hosts.toml"

@@ -1000,9 +1000,11 @@ def _cmd_provision(
 ) -> int:
     from pxeos.validation import normalize_mac, validate_mac
 
-    valid, err = validate_mac(args.mac)
-    if not valid:
-        print(f"error: {err}", file=sys.stderr)
+    if not validate_mac(args.mac):
+        print(
+            f"error: invalid MAC address format: {args.mac!r}",
+            file=sys.stderr,
+        )
         return 1
 
     mac = normalize_mac(args.mac)
