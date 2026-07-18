@@ -15,6 +15,13 @@ from pydantic import BaseModel
 
 from pxeos.config import PxeOSConfig, load_hosts
 from pxeos.engine import ProvisioningEngine
+from pxeos.errors import (
+    ConfigError,
+    PxeOSError,
+    PluginError,
+    ProvisionError,
+    ValidationError,
+)
 from pxeos.matcher import HostMatcher
 from pxeos.models import BootFirmware, ProvisionProfile
 from pxeos.registry import PluginRegistry
@@ -32,6 +39,42 @@ app = FastAPI(
     version="1.0",
     description="Cross-OS PXE boot provisioning API",
 )
+
+
+class StructuredErrorResponse(BaseModel):
+    """Structured error response returned by all error handlers."""
+
+    detail: str
+    suggestion: Optional[str] = None
+    error_code: str = "PXEOS_ERROR"
+    context: Dict[str, Any] = {}
+
+
+@app.exception_handler(PxeOSError)
+async def pxeos_error_handler(request: Any, exc: PxeOSError) -> Response:
+    """Convert any PxeOSError into a structured JSON response."""
+    from fastapi.responses import JSONResponse
+
+    # Map exception types to HTTP status codes
+    status_map: Dict[type, int] = {
+        ValidationError: 422,
+        ConfigError: 500,
+        PluginError: 422,
+        ProvisionError: 404,
+    }
+    status = status_map.get(type(exc), 400)
+
+    body: Dict[str, Any] = {
+        "detail": exc.message,
+        "error_code": exc.error_code,
+    }
+    if exc.suggestion:
+        body["suggestion"] = exc.suggestion
+    if exc.context:
+        body["context"] = exc.context
+
+    return JSONResponse(status_code=status, content=body)
+
 
 _engine: Optional[ProvisioningEngine] = None
 _registry: Optional[PluginRegistry] = None
@@ -145,14 +188,18 @@ def init_app(
 def _validate_mac_param(mac: str) -> str:
     """Validate and normalize a MAC address path parameter.
 
-    Raises HTTPException 422 on invalid format.  Returns the
+    Raises ValidationError on invalid format.  Returns the
     normalized (lowercase, colon-separated) MAC string.
     """
     if not validate_mac(mac):
-        raise HTTPException(
-            422,
-            f"invalid MAC address format: {mac!r}. "
-            "Expected format: xx:xx:xx:xx:xx:xx",
+        raise ValidationError(
+            f"invalid MAC address format: {mac!r}",
+            suggestion=(
+                "Expected format: xx:xx:xx:xx:xx:xx (colon-separated), "
+                "xx-xx-xx-xx-xx-xx (dash-separated), or xxxxxxxxxxxx "
+                "(bare hex). Example: aa:bb:cc:dd:ee:ff"
+            ),
+            context={"mac": mac},
         )
     return normalize_mac(mac)
 
@@ -315,14 +362,25 @@ def register_host(rule: HostRuleRequest) -> Dict[str, Any]:
             rule.os_family, _registry.available
         )
         if not valid:
-            raise HTTPException(422, err)
+            raise PluginError(
+                f"unknown os_family {rule.os_family!r}",
+                suggestion=(
+                    f"Available plugins: "
+                    f"{', '.join(sorted(_registry.available))}"
+                ),
+                context={"os_family": rule.os_family},
+            )
 
     # Validate MAC format if provided
     if rule.mac:
         if not validate_mac(rule.mac):
-            raise HTTPException(
-                422,
+            raise ValidationError(
                 f"invalid MAC address format: {rule.mac!r}",
+                suggestion=(
+                    "Expected format: xx:xx:xx:xx:xx:xx. "
+                    "Example: aa:bb:cc:dd:ee:ff"
+                ),
+                context={"mac": rule.mac},
             )
         rule.mac = normalize_mac(rule.mac)
 
