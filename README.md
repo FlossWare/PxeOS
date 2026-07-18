@@ -289,6 +289,43 @@ curl -X POST https://pxeos:8443/api/v1/import/fetch \
        "os_family":"fedora","vendor":"fedora","os_version":"42"}'
 ```
 
+## Web UI
+
+PxeOS includes a built-in web interface for managing distros, profiles, host rules, cloud-init configs, and imports through a browser. The web UI is served at `/web/` when the PxeOS server is running.
+
+```bash
+pxeos server start --config config/pxeos.toml
+# Open http://localhost:8443/web/ in your browser
+```
+
+**Available pages:**
+
+| Page | Path | Description |
+|------|------|-------------|
+| Dashboard | `/web/` | Overview stats, loaded plugins, server info |
+| Distros | `/web/distros` | List and delete imported distributions |
+| Profiles | `/web/profiles` | Create and manage provisioning profiles |
+| Host Rules | `/web/hosts` | Map machines to profiles by MAC, hostname, subnet, or group |
+| Cloud-Init | `/web/cloud-init` | Generate cloud-init configs and download config drive ISOs |
+| Import | `/web/import` | Upload ISOs or fetch kernel/initrd from URLs |
+
+The UI uses htmx for dynamic form interactions without full page reloads, and features a dark-themed responsive layout.
+
+For detailed page descriptions with layout diagrams, see **[Web UI Documentation](docs/WEB_UI.md)**.
+
+**Capturing screenshots:**
+
+```bash
+# Install Playwright and capture all pages
+pip install playwright && playwright install chromium
+python scripts/capture_screenshots.py
+
+# Or use the shell wrapper (auto-detects available tools)
+./scripts/capture-screenshots.sh
+```
+
+Screenshots are saved to `docs/screenshots/`. See `scripts/capture_screenshots.py` for options (`--base-url`, `--output-dir`, `--width`, `--height`).
+
 ## REST API
 
 | Method | Endpoint | Description |
