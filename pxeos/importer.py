@@ -8,7 +8,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from pxeos.iso_detect import detect_iso
+from pxeos.iso_detect import detect_iso, is_live_iso
 from pxeos.models import DistroAssets
 from pxeos.registry import PluginRegistry
 
@@ -33,6 +33,7 @@ def import_iso(
     arch: str,
     registry: PluginRegistry,
     distro_root: Path,
+    live: bool = False,
 ) -> DistroAssets:
     mount_point = Path(tempfile.mkdtemp(prefix="pxeos_mount_"))
     try:
@@ -56,11 +57,33 @@ def import_iso(
                 if not version:
                     version = detected.version
 
+            if not live:
+                live = is_live_iso(mount_point)
+                if live:
+                    print("Detected live ISO")
+
             plugin = registry.get(os_family)
+
+            dir_vendor = vendor or os_family
+            if live:
+                dir_vendor = f"{dir_vendor}-live"
             dest = _distro_dir(
-                distro_root, vendor or os_family, version, arch,
+                distro_root, dir_vendor, version, arch,
             )
-            assets = plugin.extract_from_iso(mount_point, dest)
+
+            if live:
+                if not plugin.supports_live:
+                    raise ValueError(
+                        f"{os_family} plugin does not "
+                        f"support live ISO import"
+                    )
+                assets = plugin.extract_live_assets(
+                    mount_point, dest
+                )
+            else:
+                assets = plugin.extract_from_iso(
+                    mount_point, dest
+                )
         finally:
             subprocess.run(
                 ["umount", str(mount_point)],

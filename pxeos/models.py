@@ -44,6 +44,7 @@ class DistroAssets:
     initrd_path: Optional[Path] = None
     repo_path: Path = field(default_factory=lambda: Path("."))
     boot_loader_path: Optional[Path] = None
+    squashfs_path: Optional[Path] = None
 
 
 @dataclass

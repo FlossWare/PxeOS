@@ -17,6 +17,7 @@ _SUPPORTED = ["22.04", "24.04", "24.10"]
 
 _KERNEL_SUBPATH = Path("casper/vmlinuz")
 _INITRD_SUBPATH = Path("casper/initrd")
+_LIVE_SQUASHFS = Path("casper/filesystem.squashfs")
 
 
 class UbuntuPlugin(OSPlugin):
@@ -130,6 +131,89 @@ class UbuntuPlugin(OSPlugin):
                 f"unsupported arch {profile.arch!r} for Ubuntu"
             )
         return errors
+
+    @property
+    def supports_live(self) -> bool:
+        return True
+
+    def extract_live_assets(
+        self, mount_path: Path, dest: Path
+    ) -> DistroAssets:
+        dest.mkdir(parents=True, exist_ok=True)
+
+        kernel_src = mount_path / _KERNEL_SUBPATH
+        initrd_src = mount_path / _INITRD_SUBPATH
+
+        kernel_dst = dest / "vmlinuz"
+        initrd_dst = dest / "initrd"
+
+        shutil.copy2(kernel_src, kernel_dst)
+        shutil.copy2(initrd_src, initrd_dst)
+
+        rootfs_dst = dest / "casper"
+        rootfs_dst.mkdir(parents=True, exist_ok=True)
+        squashfs_src = mount_path / _LIVE_SQUASHFS
+        squashfs_dst = rootfs_dst / "filesystem.squashfs"
+        shutil.copy2(squashfs_src, squashfs_dst)
+
+        boot_loader_dst = None
+        efi_src = mount_path / "EFI" / "boot"
+        if efi_src.exists():
+            boot_loader_dst = dest / "EFI" / "boot"
+            shutil.copytree(
+                efi_src, boot_loader_dst, dirs_exist_ok=True
+            )
+
+        return DistroAssets(
+            kernel_path=kernel_dst,
+            initrd_path=initrd_dst,
+            repo_path=rootfs_dst,
+            boot_loader_path=boot_loader_dst,
+            squashfs_path=squashfs_dst,
+        )
+
+    def live_boot_assets(
+        self, profile: ProvisionProfile
+    ) -> BootAssets:
+        rootfs_url = (
+            f"{profile.install_url.rstrip('/')}"
+            f"/casper/filesystem.squashfs"
+        )
+        boot_args = [
+            "boot=casper",
+            f"fetch={rootfs_url}",
+            "ip=dhcp",
+        ]
+        if profile.extra.get("serial_console"):
+            boot_args.append(
+                f"console={profile.extra['serial_console']}"
+            )
+
+        if profile.firmware == BootFirmware.UEFI:
+            template = "grub.cfg.j2"
+        else:
+            template = "pxelinux.cfg.j2"
+
+        bootloader_cfg = self._render_template(
+            template,
+            {
+                "profile": profile,
+                "kernel": str(_KERNEL_SUBPATH),
+                "initrd": str(_INITRD_SUBPATH),
+                "boot_args": " ".join(boot_args),
+                "menu_label": (
+                    f"{profile.name} - Ubuntu Live "
+                    f"{profile.os_version}"
+                ),
+            },
+        )
+
+        return BootAssets(
+            kernel=str(_KERNEL_SUBPATH),
+            initrd=str(_INITRD_SUBPATH),
+            boot_args=tuple(boot_args),
+            bootloader_config=bootloader_cfg,
+        )
 
     def extract_from_iso(
         self, mount_path: Path, dest: Path

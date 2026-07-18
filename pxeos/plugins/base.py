@@ -40,6 +40,24 @@ class OSPlugin(ABC):
         self, mount_path: Path, dest: Path
     ) -> DistroAssets: ...
 
+    @property
+    def supports_live(self) -> bool:
+        return False
+
+    def extract_live_assets(
+        self, mount_path: Path, dest: Path
+    ) -> "DistroAssets":
+        raise NotImplementedError(
+            f"{self.os_family} does not support live ISO import"
+        )
+
+    def live_boot_assets(
+        self, profile: ProvisionProfile
+    ) -> "BootAssets":
+        raise NotImplementedError(
+            f"{self.os_family} does not support live boot"
+        )
+
     def validate_profile(
         self, profile: ProvisionProfile
     ) -> list[str]:

@@ -106,6 +106,10 @@ def _add_import_parser(
     imp.add_argument(
         "--arch", default="x86_64", help="architecture"
     )
+    imp.add_argument(
+        "--live", action="store_true", default=False,
+        help="import as live ISO (squashfs rootfs)",
+    )
 
 
 def _add_profile_parser(
@@ -459,6 +463,7 @@ def _cmd_import(
             args.arch,
             registry,
             config.distro_root,
+            live=getattr(args, "live", False),
         )
     else:
         assets = import_url(
@@ -475,6 +480,8 @@ def _cmd_import(
     if assets.initrd_path:
         print(f"initrd:  {assets.initrd_path}")
     print(f"repo:    {assets.repo_path}")
+    if assets.squashfs_path:
+        print(f"rootfs:  {assets.squashfs_path}")
     return 0
 
 

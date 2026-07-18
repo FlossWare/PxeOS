@@ -17,6 +17,9 @@ _SUPPORTED = ["11", "12", "13"]
 
 _KERNEL_CANDIDATES = ("install.amd/vmlinuz", "install.amd/linux")
 _INITRD_SUBPATH = Path("install.amd/initrd.gz")
+_LIVE_KERNEL = Path("live/vmlinuz")
+_LIVE_INITRD = Path("live/initrd.img")
+_LIVE_SQUASHFS = Path("live/filesystem.squashfs")
 
 
 class DebianPlugin(OSPlugin):
@@ -135,6 +138,89 @@ class DebianPlugin(OSPlugin):
                 f"unsupported arch {profile.arch!r} for Debian"
             )
         return errors
+
+    @property
+    def supports_live(self) -> bool:
+        return True
+
+    def extract_live_assets(
+        self, mount_path: Path, dest: Path
+    ) -> DistroAssets:
+        dest.mkdir(parents=True, exist_ok=True)
+
+        kernel_src = mount_path / _LIVE_KERNEL
+        initrd_src = mount_path / _LIVE_INITRD
+
+        kernel_dst = dest / "vmlinuz"
+        initrd_dst = dest / "initrd.img"
+
+        shutil.copy2(kernel_src, kernel_dst)
+        shutil.copy2(initrd_src, initrd_dst)
+
+        rootfs_dst = dest / "live"
+        rootfs_dst.mkdir(parents=True, exist_ok=True)
+        squashfs_src = mount_path / _LIVE_SQUASHFS
+        squashfs_dst = rootfs_dst / "filesystem.squashfs"
+        shutil.copy2(squashfs_src, squashfs_dst)
+
+        boot_loader_dst = None
+        efi_src = mount_path / "EFI" / "boot"
+        if efi_src.exists():
+            boot_loader_dst = dest / "EFI" / "boot"
+            shutil.copytree(
+                efi_src, boot_loader_dst, dirs_exist_ok=True
+            )
+
+        return DistroAssets(
+            kernel_path=kernel_dst,
+            initrd_path=initrd_dst,
+            repo_path=rootfs_dst,
+            boot_loader_path=boot_loader_dst,
+            squashfs_path=squashfs_dst,
+        )
+
+    def live_boot_assets(
+        self, profile: ProvisionProfile
+    ) -> BootAssets:
+        rootfs_url = (
+            f"{profile.install_url.rstrip('/')}"
+            f"/live/filesystem.squashfs"
+        )
+        boot_args = [
+            "boot=live",
+            f"fetch={rootfs_url}",
+            "ip=dhcp",
+        ]
+        if profile.extra.get("serial_console"):
+            boot_args.append(
+                f"console={profile.extra['serial_console']}"
+            )
+
+        if profile.firmware == BootFirmware.UEFI:
+            template = "grub.cfg.j2"
+        else:
+            template = "pxelinux.cfg.j2"
+
+        bootloader_cfg = self._render_template(
+            template,
+            {
+                "profile": profile,
+                "kernel": str(_LIVE_KERNEL),
+                "initrd": str(_LIVE_INITRD),
+                "boot_args": " ".join(boot_args),
+                "menu_label": (
+                    f"{profile.name} - Debian Live "
+                    f"{profile.os_version}"
+                ),
+            },
+        )
+
+        return BootAssets(
+            kernel=str(_LIVE_KERNEL),
+            initrd=str(_LIVE_INITRD),
+            boot_args=tuple(boot_args),
+            bootloader_config=bootloader_cfg,
+        )
 
     def extract_from_iso(
         self, mount_path: Path, dest: Path

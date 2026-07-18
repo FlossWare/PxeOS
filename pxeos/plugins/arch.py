@@ -21,6 +21,7 @@ _KERNEL_SUBPATH = Path(
 _INITRD_SUBPATH = Path(
     "arch/boot/x86_64/initramfs-linux.img"
 )
+_LIVE_SQUASHFS = Path("arch/x86_64/airootfs.sfs")
 
 
 class ArchPlugin(OSPlugin):
@@ -140,6 +141,90 @@ class ArchPlugin(OSPlugin):
                 f"for Arch Linux"
             )
         return errors
+
+    @property
+    def supports_live(self) -> bool:
+        return True
+
+    def extract_live_assets(
+        self, mount_path: Path, dest: Path
+    ) -> DistroAssets:
+        dest.mkdir(parents=True, exist_ok=True)
+
+        kernel_src = mount_path / _KERNEL_SUBPATH
+        initrd_src = mount_path / _INITRD_SUBPATH
+
+        kernel_dst = dest / "vmlinuz-linux"
+        initrd_dst = dest / "initramfs-linux.img"
+
+        shutil.copy2(kernel_src, kernel_dst)
+        shutil.copy2(initrd_src, initrd_dst)
+
+        rootfs_dst = dest / "arch" / "x86_64"
+        rootfs_dst.mkdir(parents=True, exist_ok=True)
+        squashfs_src = mount_path / _LIVE_SQUASHFS
+        squashfs_dst = rootfs_dst / "airootfs.sfs"
+        shutil.copy2(squashfs_src, squashfs_dst)
+
+        boot_loader_dst = None
+        efi_src = mount_path / "EFI"
+        if efi_src.exists():
+            boot_loader_dst = dest / "EFI"
+            shutil.copytree(
+                efi_src, boot_loader_dst, dirs_exist_ok=True
+            )
+
+        return DistroAssets(
+            kernel_path=kernel_dst,
+            initrd_path=initrd_dst,
+            repo_path=rootfs_dst,
+            boot_loader_path=boot_loader_dst,
+            squashfs_path=squashfs_dst,
+        )
+
+    def live_boot_assets(
+        self, profile: ProvisionProfile
+    ) -> BootAssets:
+        boot_args = [
+            "archisobasedir=arch",
+            f"archiso_http_srv="
+            f"{profile.install_url.rstrip('/')}/",
+            "ip=dhcp",
+        ]
+        if profile.extra.get("serial_console"):
+            boot_args.append(
+                f"console={profile.extra['serial_console']}"
+            )
+        if profile.extra.get("cow_spacesize"):
+            boot_args.append(
+                f"cow_spacesize="
+                f"{profile.extra['cow_spacesize']}"
+            )
+
+        if profile.firmware == BootFirmware.UEFI:
+            template = "grub.cfg.j2"
+        else:
+            template = "pxelinux.cfg.j2"
+
+        bootloader_cfg = self._render_template(
+            template,
+            {
+                "profile": profile,
+                "kernel": str(_KERNEL_SUBPATH),
+                "initrd": str(_INITRD_SUBPATH),
+                "boot_args": " ".join(boot_args),
+                "menu_label": (
+                    f"{profile.name} - Arch Linux Live"
+                ),
+            },
+        )
+
+        return BootAssets(
+            kernel=str(_KERNEL_SUBPATH),
+            initrd=str(_INITRD_SUBPATH),
+            boot_args=tuple(boot_args),
+            bootloader_config=bootloader_cfg,
+        )
 
     def extract_from_iso(
         self, mount_path: Path, dest: Path

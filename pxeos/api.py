@@ -609,12 +609,14 @@ class ImportFetchRequest(BaseModel):
     os_version: str = ""
     arch: str = "x86_64"
     mnemonic: Optional[str] = None
+    live: bool = False
 
 
 class ImportResponse(BaseModel):
     kernel_path: str
     initrd_path: Optional[str] = None
     repo_path: str
+    squashfs_path: Optional[str] = None
 
 
 @app.post(
@@ -629,6 +631,7 @@ async def import_upload(
     vendor: str = Form(""),
     arch: str = Form("x86_64"),
     mnemonic: str = Form(""),
+    live: bool = Form(False),
 ) -> Dict[str, Any]:
     if _config is None or _registry is None:
         raise HTTPException(503, "not initialized")
@@ -665,7 +668,7 @@ async def import_upload(
     try:
         assets = import_iso(
             iso_path, os_family, vendor, os_version, arch,
-            _registry, _config.distro_root,
+            _registry, _config.distro_root, live=live,
         )
         return {
             "kernel_path": str(assets.kernel_path),
@@ -673,6 +676,9 @@ async def import_upload(
                 str(assets.initrd_path) if assets.initrd_path else None
             ),
             "repo_path": str(assets.repo_path),
+            "squashfs_path": (
+                str(assets.squashfs_path) if assets.squashfs_path else None
+            ),
         }
     finally:
         iso_path.unlink(missing_ok=True)
@@ -724,6 +730,9 @@ def import_fetch(req: ImportFetchRequest) -> Dict[str, Any]:
             str(assets.initrd_path) if assets.initrd_path else None
         ),
         "repo_path": str(assets.repo_path),
+        "squashfs_path": (
+            str(assets.squashfs_path) if assets.squashfs_path else None
+        ),
     }
 
 

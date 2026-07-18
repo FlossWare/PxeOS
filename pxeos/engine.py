@@ -63,7 +63,12 @@ class ProvisioningEngine:
         rule = self._resolve_rule(mac)
         profile = self._load_profile_for_rule(rule)
         plugin = self._registry.get(rule.os_family)
-        assets = plugin.boot_assets(profile)
+        is_live = profile.extra.get("live", False)
+
+        if is_live and plugin.supports_live:
+            assets = plugin.live_boot_assets(profile)
+        else:
+            assets = plugin.boot_assets(profile)
 
         # Register if not tracked, then transition to BOOTING
         if self.tracker.get(mac) is None:
@@ -75,11 +80,6 @@ class ProvisioningEngine:
             )
         self.tracker.transition(mac, ProvisionState.BOOTING)
 
-        base_url = self._base_url()
-        autoinstall_url = (
-            f"{base_url}/api/v1/autoinstall/{mac}"
-        )
-
         lines = [
             "#!ipxe",
             "",
@@ -89,7 +89,12 @@ class ProvisioningEngine:
             lines.append(f"initrd {assets.initrd}")
 
         args = list(assets.boot_args)
-        args.append(f"inst.ks={autoinstall_url}")
+        if not is_live:
+            base_url = self._base_url()
+            autoinstall_url = (
+                f"{base_url}/api/v1/autoinstall/{mac}"
+            )
+            args.append(f"inst.ks={autoinstall_url}")
         lines.append(f"boot {' '.join(args)}")
         lines.append("")
 

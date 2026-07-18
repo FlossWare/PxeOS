@@ -10,6 +10,27 @@ from typing import Optional
 from pxeos.mnemonics import DistroAlias
 
 
+def is_live_iso(mount_point: Path) -> bool:
+    """Check if a mounted ISO contains a live filesystem.
+
+    Looks for known squashfs rootfs paths used by major distros:
+    - Fedora Live: ``LiveOS/squashfs.img``
+    - Ubuntu Live: ``casper/filesystem.squashfs``
+    - Debian Live: ``live/filesystem.squashfs``
+    - Arch Live: ``arch/x86_64/airootfs.sfs``
+    """
+    live_markers = [
+        "LiveOS/squashfs.img",
+        "casper/filesystem.squashfs",
+        "live/filesystem.squashfs",
+        "arch/x86_64/airootfs.sfs",
+    ]
+    return any(
+        (mount_point / marker).is_file()
+        for marker in live_markers
+    )
+
+
 def detect_iso(
     mount_point: Path,
     iso_path: Optional[Path] = None,
