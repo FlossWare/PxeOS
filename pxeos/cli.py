@@ -53,6 +53,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_host_parser(sub)
     _add_client_parser(sub)
     _add_cloud_init_parser(sub)
+    _add_provision_parser(sub)
     _add_distro_parser(sub)
     _add_secret_parser(sub)
     _add_named_host_parser(sub)
@@ -109,6 +110,10 @@ def _add_import_parser(
     imp.add_argument(
         "--live", action="store_true", default=False,
         help="import as live ISO (squashfs rootfs)",
+    )
+    imp.add_argument(
+        "--dry-run", action="store_true", default=False,
+        help="validate inputs and show what would be imported without extracting",
     )
 
 
@@ -452,7 +457,61 @@ def _cmd_import(
 ) -> int:
     from pxeos.importer import import_iso, import_url
 
+    # Validate ISO file exists before attempting to mount
+    if args.iso and not args.iso.exists():
+        print(
+            f"error: ISO file not found: {args.iso}\n"
+            f"hint: check the path and ensure the file exists.",
+            file=sys.stderr,
+        )
+        return 1
+
     _resolve_distro_args(args)
+
+    dry_run = getattr(args, "dry_run", False)
+    live = getattr(args, "live", False)
+
+    if dry_run:
+        print("[dry-run] Import preview:")
+        if args.iso:
+            size_mb = args.iso.stat().st_size / (1024 * 1024)
+            print(f"  source:     {args.iso} ({size_mb:.1f} MB)")
+        else:
+            print(f"  source:     {args.url}")
+        print(f"  os_family:  {args.os_family}")
+        if args.vendor:
+            print(f"  vendor:     {args.vendor}")
+        print(f"  os_version: {args.os_version}")
+        print(f"  arch:       {args.arch}")
+        if live:
+            print(f"  live:       yes")
+
+        # Validate plugin exists
+        try:
+            plugin = registry.get(args.os_family)
+            print(f"  plugin:     {plugin.os_family}")
+            if live and not plugin.supports_live:
+                print(
+                    f"\n  warning: {args.os_family} plugin "
+                    f"does not support live ISO import",
+                    file=sys.stderr,
+                )
+        except ValueError as exc:
+            print(f"\nerror: {exc}", file=sys.stderr)
+            return 1
+
+        dir_vendor = args.vendor or args.os_family
+        if live:
+            dir_vendor = f"{dir_vendor}-live"
+        dest_name = f"{dir_vendor}-{args.os_version}-{args.arch}"
+        dest = config.distro_root / dest_name
+        print(f"  dest:       {dest}")
+        print()
+        print(
+            "[dry-run] No files extracted. "
+            "Remove --dry-run to import for real."
+        )
+        return 0
 
     if args.iso:
         assets = import_iso(
@@ -463,7 +522,7 @@ def _cmd_import(
             args.arch,
             registry,
             config.distro_root,
-            live=getattr(args, "live", False),
+            live=live,
         )
     else:
         assets = import_url(
@@ -899,6 +958,145 @@ def _write_hosts_file(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines))
+
+
+def _add_provision_parser(
+    sub: argparse._SubParsersAction,
+) -> None:
+    prov = sub.add_parser(
+        "provision",
+        help="provision a host (or preview with --dry-run)",
+    )
+    prov.add_argument(
+        "--mac", required=True, help="MAC address of the host",
+    )
+    prov.add_argument(
+        "--hostname", default=None, help="hostname for matching",
+    )
+    prov.add_argument(
+        "--subnet", default=None, help="client subnet for matching",
+    )
+    prov.add_argument(
+        "--serial", default=None, help="serial number for matching",
+    )
+    prov.add_argument(
+        "--group", action="append", default=None,
+        help="group name for matching (repeatable)",
+    )
+    prov.add_argument(
+        "--arch", default=None, help="architecture for matching",
+    )
+    prov.add_argument(
+        "--dry-run", action="store_true", default=False,
+        help="show what would be provisioned without tracking state",
+    )
+
+
+def _cmd_provision(
+    args: argparse.Namespace,
+    config: PxeOSConfig,
+    registry: PluginRegistry,
+    matcher: HostMatcher,
+) -> int:
+    from pxeos.validation import normalize_mac, validate_mac
+
+    valid, err = validate_mac(args.mac)
+    if not valid:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+
+    mac = normalize_mac(args.mac)
+    engine = ProvisioningEngine(registry, matcher, config)
+
+    # Resolve the matching host rule
+    rule = engine.get_rule(
+        mac,
+        hostname=args.hostname,
+        subnet=args.subnet,
+        serial=args.serial,
+        groups=args.group,
+        arch=args.arch,
+    )
+    if rule is None:
+        print(
+            f"error: no matching host rule for MAC {mac!r}",
+            file=sys.stderr,
+        )
+        # Show what rules exist so the user can debug
+        rules = matcher._rules
+        if rules:
+            print("\nConfigured host rules:", file=sys.stderr)
+            for r in rules:
+                criteria = []
+                if r.mac:
+                    criteria.append(f"mac={r.mac}")
+                if r.mac_prefix:
+                    criteria.append(f"prefix={r.mac_prefix}")
+                if r.hostname_pattern:
+                    criteria.append(f"host={r.hostname_pattern}")
+                if r.subnet:
+                    criteria.append(f"subnet={r.subnet}")
+                if r.serial:
+                    criteria.append(f"serial={r.serial}")
+                if r.group:
+                    criteria.append(f"group={r.group}")
+                if r.arch:
+                    criteria.append(f"arch={r.arch}")
+                match_str = ", ".join(criteria) if criteria else "default"
+                print(
+                    f"  [{r.priority:3d}] {r.profile:<20s} ({match_str})",
+                    file=sys.stderr,
+                )
+        else:
+            print(
+                "hint: no host rules configured. "
+                "Use 'pxeos host add' to create one.",
+                file=sys.stderr,
+            )
+        return 1
+
+    if args.dry_run:
+        print("[dry-run] Provisioning preview:")
+        print(f"  MAC:       {mac}")
+        print(f"  profile:   {rule.profile}")
+        print(f"  os_family: {rule.os_family}")
+        print(f"  os_version:{rule.os_version}")
+        if rule.vendor:
+            print(f"  vendor:    {rule.vendor}")
+        print(f"  priority:  {rule.priority}")
+
+        try:
+            plugin = registry.get(rule.os_family)
+        except ValueError as exc:
+            print(f"\nerror: {exc}", file=sys.stderr)
+            return 1
+
+        print(f"  plugin:    {plugin.os_family}")
+        print()
+        print("[dry-run] No state tracked. "
+              "Remove --dry-run to provision for real.")
+        return 0
+
+    # Real provisioning
+    try:
+        assets = engine.provision(
+            mac,
+            hostname=args.hostname,
+            subnet=args.subnet,
+            serial=args.serial,
+            groups=args.group,
+            arch=args.arch,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"kernel: {assets.kernel}")
+    if assets.initrd:
+        print(f"initrd: {assets.initrd}")
+    if assets.boot_args:
+        print(f"args:   {' '.join(assets.boot_args)}")
+    return 0
 
 
 def _add_distro_parser(
@@ -1341,6 +1539,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _cmd_server(args, config, registry, matcher)
     elif args.command == "import":
         return _cmd_import(args, config, registry)
+    elif args.command == "provision":
+        return _cmd_provision(
+            args, config, registry, matcher
+        )
     elif args.command == "profile":
         return _cmd_profile(args, config)
     elif args.command == "host":

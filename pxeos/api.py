@@ -17,6 +17,7 @@ from pxeos.models import BootFirmware, ProvisionProfile
 from pxeos.registry import PluginRegistry
 from pxeos.auth import ApiKeyStore, Role, get_key_store, init_auth, require_role
 from pxeos.state import ProvisionState, ProvisionTracker
+from pxeos.validation import normalize_mac, validate_mac, validate_os_family
 
 app = FastAPI(
     title="PxeOS",
@@ -130,10 +131,23 @@ def init_app(
     return app
 
 
+def _validate_mac_param(mac: str) -> str:
+    """Validate and normalize a MAC address path parameter.
+
+    Raises HTTPException 422 on invalid format.  Returns the
+    normalized (lowercase, colon-separated) MAC string.
+    """
+    valid, err = validate_mac(mac)
+    if not valid:
+        raise HTTPException(422, err)
+    return normalize_mac(mac)
+
+
 @app.get("/api/v1/boot/{mac}")
 def get_boot_script(mac: str) -> Response:
     if _engine is None:
         raise HTTPException(503, "engine not initialized")
+    mac = _validate_mac_param(mac)
     try:
         script = _engine.render_ipxe_script(mac)
         return Response(
@@ -279,6 +293,21 @@ def register_host(rule: HostRuleRequest) -> Dict[str, Any]:
     if _config is None:
         raise HTTPException(503, "config not initialized")
 
+    # Validate os_family against registered plugins
+    if _registry is not None:
+        valid, err = validate_os_family(
+            rule.os_family, _registry.available
+        )
+        if not valid:
+            raise HTTPException(422, err)
+
+    # Validate MAC format if provided
+    if rule.mac:
+        valid, err = validate_mac(rule.mac)
+        if not valid:
+            raise HTTPException(422, err)
+        rule.mac = normalize_mac(rule.mac)
+
     hosts_file = _config.data_dir / "hosts.toml"
 
     import sys
@@ -364,6 +393,7 @@ def health_check() -> Dict[str, Any]:
 def get_provision_status(mac: str) -> Dict[str, Any]:
     if _engine is None:
         raise HTTPException(503, "engine not initialized")
+    mac = _validate_mac_param(mac)
     record = _engine.tracker.get(mac)
     if record is None:
         raise HTTPException(

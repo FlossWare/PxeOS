@@ -37,8 +37,17 @@ class PxeOSConfig:
 
 
 def load_config(path: Path) -> PxeOSConfig:
-    with open(path, "rb") as fh:
-        data = tomllib.load(fh)
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(
+            f"malformed config file {path}: {exc}"
+        ) from exc
+    except OSError as exc:
+        raise ValueError(
+            f"cannot read config file {path}: {exc}"
+        ) from exc
 
     server = data.get("server", {})
     paths = data.get("paths", {})
@@ -62,8 +71,13 @@ def load_config(path: Path) -> PxeOSConfig:
 
 
 def load_hosts(path: Path) -> List[HostRule]:
-    with open(path, "rb") as fh:
-        data = tomllib.load(fh)
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(
+            f"malformed hosts file {path}: {exc}"
+        ) from exc
 
     rules: List[HostRule] = []
     for entry in data.get("host", []):
@@ -87,8 +101,13 @@ def load_hosts(path: Path) -> List[HostRule]:
 
 
 def load_profile(path: Path) -> ProvisionProfile:
-    with open(path, "rb") as fh:
-        data = tomllib.load(fh)
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(
+            f"malformed profile file {path}: {exc}"
+        ) from exc
 
     profile = data.get("profile", data)
     firmware_str = profile.get("firmware", "bios").lower()
