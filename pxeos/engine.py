@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from pxeos.cache import ttl_cache
 from pxeos.config import PxeOSConfig, load_profile
 from pxeos.matcher import HostMatcher
 from pxeos.models import BootAssets, HostRule, ProvisionProfile
@@ -13,6 +14,12 @@ from pxeos.registry import PluginRegistry
 from pxeos.state import ProvisionState, ProvisionTracker
 
 logger = logging.getLogger("pxeos.engine")
+
+
+@ttl_cache(maxsize=64, ttl=300, name="profile_loader")
+def _cached_load_profile(profile_path: str) -> ProvisionProfile:
+    """Load a profile from disk with TTL caching."""
+    return load_profile(Path(profile_path))
 
 # iPXE script returned when netboot is disabled (boot-once complete).
 # ``exit`` tells iPXE to fall through to the next boot device (local disk).
@@ -217,7 +224,7 @@ class ProvisioningEngine:
                 f"invalid profile name: {rule.profile!r}"
             )
         if profile_path.exists():
-            return load_profile(profile_path)
+            return _cached_load_profile(str(profile_path))
 
         return ProvisionProfile(
             name=rule.profile,

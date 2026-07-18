@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import textwrap
 
 import pytest
 
+from pxeos.config import PxeOSConfig
 from pxeos.models import BootFirmware, HostRule, ProvisionProfile
 from pxeos.registry import PluginRegistry
 
@@ -193,3 +195,76 @@ def plugin_registry() -> PluginRegistry:
     registry = PluginRegistry()
     registry.load_builtins()
     return registry
+
+
+@pytest.fixture
+def pxeos_config(tmp_path) -> PxeOSConfig:
+    """A PxeOSConfig pointing at temporary directories."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    distro_root = tmp_path / "distros"
+    distro_root.mkdir()
+    return PxeOSConfig(
+        data_dir=data_dir,
+        distro_root=distro_root,
+    )
+
+
+@pytest.fixture
+def cobbler_export_dir(tmp_path):
+    """A temporary Cobbler export directory with sample data."""
+    export_dir = tmp_path / "cobbler_export"
+    export_dir.mkdir()
+
+    distros = [
+        {
+            "name": "fedora40-x86_64",
+            "breed": "redhat",
+            "os_version": "40",
+            "arch": "x86_64",
+            "kernel": "/var/lib/cobbler/distros/fedora40/vmlinuz",
+            "initrd": "/var/lib/cobbler/distros/fedora40/initrd.img",
+        }
+    ]
+    (export_dir / "distros.json").write_text(json.dumps(distros))
+
+    profiles = [
+        {
+            "name": "webserver",
+            "distro": "fedora40-x86_64",
+            "kickstart": "/var/lib/cobbler/kickstarts/web.ks",
+        }
+    ]
+    (export_dir / "profiles.json").write_text(json.dumps(profiles))
+
+    systems = [
+        {
+            "name": "web-01",
+            "profile": "webserver",
+            "hostname": "web-01.example.com",
+            "interfaces": {
+                "eth0": {
+                    "mac_address": "aa:bb:cc:dd:ee:ff",
+                    "ip_address": "10.0.0.10",
+                }
+            },
+        }
+    ]
+    (export_dir / "systems.json").write_text(json.dumps(systems))
+
+    return export_dir
+
+
+@pytest.fixture
+def host_rule_with_bmc() -> HostRule:
+    """A HostRule with BMC power management fields populated."""
+    return HostRule(
+        profile="bmc-test",
+        os_family="fedora",
+        os_version="40",
+        mac="aa:bb:cc:dd:ee:ff",
+        bmc_host="192.168.1.100",
+        bmc_user="admin",
+        bmc_password="secret",
+        bmc_driver="ipmi",
+    )
