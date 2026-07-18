@@ -8,6 +8,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional, Sequence
 
@@ -75,6 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_migrate_parser(sub)
     _add_image_parser(sub)
     _add_service_parser(sub)
+    _add_mirror_parser(sub)
 
     return parser
 
@@ -2075,8 +2077,154 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _cmd_image(args, config)
     elif args.command == "service":
         return _cmd_service(args, config)
+    elif args.command == "mirror":
+        return _cmd_mirror(args, config)
 
     parser.print_help()
+    return 1
+
+
+def _add_mirror_parser(
+    sub: argparse._SubParsersAction,
+) -> None:
+    mirror = sub.add_parser(
+        "mirror",
+        help="manage repository mirrors for offline provisioning",
+    )
+    mirror_sub = mirror.add_subparsers(dest="mirror_action")
+
+    m_add = mirror_sub.add_parser(
+        "add", help="add a mirror"
+    )
+    m_add.add_argument(
+        "--name", required=True, help="mirror name"
+    )
+    m_add.add_argument(
+        "--url", required=True,
+        help="source URL to mirror (http/https/ftp/rsync)",
+    )
+    m_add.add_argument(
+        "--path", default="",
+        help="local path (default: data_dir/mirrors/<name>)",
+    )
+    m_add.add_argument(
+        "--interval", type=int, default=86400,
+        help="sync interval in seconds (default: 86400)",
+    )
+
+    m_remove = mirror_sub.add_parser(
+        "remove", help="remove a mirror"
+    )
+    m_remove.add_argument("name", help="mirror name")
+
+    m_sync = mirror_sub.add_parser(
+        "sync", help="sync a mirror now"
+    )
+    m_sync.add_argument("name", help="mirror name")
+
+    mirror_sub.add_parser("list", help="list mirrors")
+
+    m_status = mirror_sub.add_parser(
+        "status", help="show mirror status"
+    )
+    m_status.add_argument("name", help="mirror name")
+
+
+def _cmd_mirror(
+    args: argparse.Namespace,
+    config: PxeOSConfig,
+) -> int:
+    from pxeos.repo_mirror import RepoManager, RepoMirror
+
+    manager = RepoManager(config.data_dir)
+
+    if args.mirror_action == "add":
+        mirror = RepoMirror(
+            name=args.name,
+            source_url=args.url,
+            local_path=args.path or "",
+            sync_interval=args.interval,
+        )
+        try:
+            result = manager.add_mirror(mirror)
+            print(f"added mirror: {result.name}")
+            print(f"  source:   {result.source_url}")
+            print(f"  local:    {result.local_path}")
+            print(f"  interval: {result.sync_interval}s")
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    elif args.mirror_action == "remove":
+        if manager.remove_mirror(args.name):
+            print(f"removed mirror: {args.name}")
+            return 0
+        print(f"mirror not found: {args.name}")
+        return 1
+
+    elif args.mirror_action == "sync":
+        try:
+            result = manager.sync_mirror(args.name)
+            if result.success:
+                duration = result.finished_at - result.started_at
+                print(
+                    f"synced mirror: {args.name} "
+                    f"({duration:.1f}s)"
+                )
+                return 0
+            else:
+                print(
+                    f"sync failed: {result.error}",
+                    file=sys.stderr,
+                )
+                return 1
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    elif args.mirror_action == "list":
+        mirrors = manager.list_mirrors()
+        if not mirrors:
+            print("no mirrors configured")
+            return 0
+        fmt = "{:<20s} {:<40s} {}"
+        print(fmt.format("NAME", "SOURCE", "LAST SYNC"))
+        print("-" * 75)
+        for m in mirrors:
+            sync_str = (
+                time.strftime(
+                    "%Y-%m-%d %H:%M",
+                    time.localtime(m.last_sync),
+                )
+                if m.last_sync
+                else "never"
+            )
+            print(fmt.format(m.name, m.source_url, sync_str))
+        return 0
+
+    elif args.mirror_action == "status":
+        mirror = manager.get_mirror(args.name)
+        if mirror is None:
+            print(f"mirror not found: {args.name}")
+            return 1
+        print(f"name:      {mirror.name}")
+        print(f"source:    {mirror.source_url}")
+        print(f"local:     {mirror.local_path}")
+        print(f"interval:  {mirror.sync_interval}s")
+        if mirror.last_sync:
+            sync_str = time.strftime(
+                "%Y-%m-%d %H:%M:%S",
+                time.localtime(mirror.last_sync),
+            )
+            print(f"last_sync: {sync_str}")
+        else:
+            print("last_sync: never")
+        return 0
+
+    print(
+        "usage: pxeos mirror {add|remove|sync|list|status}"
+    )
     return 1
 
 

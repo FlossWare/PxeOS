@@ -141,4 +141,6 @@ def load_profile(path: Path) -> ProvisionProfile:
         packages=profile.get("packages", []),
         post_scripts=profile.get("post_scripts", []),
         extra=profile.get("extra", {}),
+        ipxe_commands=profile.get("ipxe_commands", []),
+        dhcp_options=profile.get("dhcp_options", {}),
     )
