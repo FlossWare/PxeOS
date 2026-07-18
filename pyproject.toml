@@ -92,6 +92,7 @@ openbsd = "pxeos.plugins.openbsd:OpenBSDPlugin"
 netbsd = "pxeos.plugins.netbsd:NetBSDPlugin"
 arch = "pxeos.plugins.arch:ArchPlugin"
 windows = "pxeos.plugins.windows:WindowsPlugin"
+tinycore = "pxeos.plugins.tinycore:TinyCorePlugin"
 
 [project.urls]
 Homepage = "https://github.com/FlossWare/PxeOS"

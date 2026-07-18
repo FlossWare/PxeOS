@@ -73,6 +73,7 @@ class PluginRegistry:
             "pxeos.plugins.netbsd",
             "pxeos.plugins.arch",
             "pxeos.plugins.windows",
+            "pxeos.plugins.tinycore",
         ]
         for mod_name in builtin_modules:
             try:

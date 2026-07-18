@@ -1,0 +1,41 @@
+#!/bin/sh
+# PxeOS generated Tiny Core Linux configuration script
+# Profile: {{ profile.name }}
+# Version: {{ profile.os_version }}
+
+# Set hostname
+echo "{{ hostname }}" > /etc/hostname
+hostname "{{ hostname }}"
+
+{% if tce_mirror %}
+# Configure TCE mirror
+echo "{{ tce_mirror }}" > /opt/tcemirror
+{% endif %}
+
+{% if persistence == "hd" %}
+# Enable hard disk persistence
+filetool.sh -b
+{% endif %}
+
+{% if packages %}
+# Install TCE extensions
+{% for pkg in packages %}
+tce-load -wi {{ pkg }}
+{% endfor %}
+{% endif %}
+
+{% if post_scripts %}
+# Post-install scripts
+{% for script in post_scripts %}
+{{ script }}
+{% endfor %}
+{% endif %}
+
+{% if mydata_url %}
+# Restore user data
+wget -q -O /tmp/mydata.tgz "{{ mydata_url }}"
+tar xzf /tmp/mydata.tgz -C /
+{% endif %}
+
+# Save configuration
+filetool.sh -b
