@@ -74,6 +74,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_power_parser(sub)
     _add_migrate_parser(sub)
     _add_image_parser(sub)
+    _add_service_parser(sub)
 
     return parser
 
@@ -1815,6 +1816,75 @@ def _human_size(nbytes: int) -> str:
     return f"{nbytes:.1f} PB"
 
 
+def _add_service_parser(
+    sub: argparse._SubParsersAction,
+) -> None:
+    svc = sub.add_parser(
+        "service", help="service discovery and info"
+    )
+    svc_sub = svc.add_subparsers(dest="service_action")
+
+    svc_sub.add_parser(
+        "info",
+        help="show service info (URL, version, auth, endpoints)",
+    )
+
+    svc_sub.add_parser(
+        "register",
+        help="register with mDNS (requires zeroconf)",
+    )
+
+
+def _cmd_service(
+    args: argparse.Namespace,
+    config: PxeOSConfig,
+) -> int:
+    from pxeos.discovery import get_service_info, register_mdns
+
+    if args.service_action == "info":
+        info = get_service_info(
+            host=config.server_host,
+            port=config.server_port,
+            auth_enabled=config.auth_enabled,
+            tls_enabled=config.tls_cert is not None,
+        )
+        print(f"service:  {info['service']}")
+        print(f"version:  {info['version']}")
+        print(f"host:     {info['host']}")
+        print(f"port:     {info['port']}")
+        print(f"base_url: {info['base_url']}")
+        print(f"api_base: {info['api_base']}")
+        print(f"auth:     {info['auth_enabled']}")
+        print(f"tls:      {info['tls_enabled']}")
+        print("endpoints:")
+        for ep in info["endpoints"]:
+            print(f"  {ep}")
+        return 0
+
+    elif args.service_action == "register":
+        zc = register_mdns(
+            host=config.server_host,
+            port=config.server_port,
+            service_name=config.service_name,
+            auth_enabled=config.auth_enabled,
+        )
+        if zc is None:
+            print(
+                "error: mDNS registration failed "
+                "(is zeroconf installed?)",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"registered mDNS service "
+            f"'{config.service_name}' on port {config.server_port}"
+        )
+        return 0
+
+    print("usage: pxeos service {info|register}")
+    return 1
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = _build_parser()
 
@@ -1879,6 +1949,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _cmd_migrate(args, config, registry)
     elif args.command == "image":
         return _cmd_image(args, config)
+    elif args.command == "service":
+        return _cmd_service(args, config)
 
     parser.print_help()
     return 1

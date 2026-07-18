@@ -415,6 +415,22 @@ def health_check() -> Dict[str, Any]:
     }
 
 
+@app.get("/api/v1/service-info")
+def service_info() -> Dict[str, Any]:
+    """Return service metadata for VirtOS integration and discovery."""
+    from pxeos.discovery import get_service_info
+
+    if _config is None:
+        raise HTTPException(503, "config not initialized")
+
+    return get_service_info(
+        host=_config.server_host,
+        port=_config.server_port,
+        auth_enabled=_config.auth_enabled,
+        tls_enabled=_config.tls_cert is not None,
+    )
+
+
 @app.get("/metrics")
 def prometheus_metrics() -> Response:
     """Prometheus-compatible metrics endpoint."""

@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+"""VirtOS-PxeOS bridge: discovers PxeOS and configures reverse proxy.
+
+This script is called by VirtOS to discover a running PxeOS instance
+and generate reverse-proxy configuration (nginx or HAProxy) so that
+VirtOS can expose PxeOS endpoints under /api/v1/pxe/*.
+
+Usage:
+    virtos-pxeos discover [--config PATH] [--host HOST] [--port PORT]
+    virtos-pxeos health   [--url URL]
+    virtos-pxeos nginx    [--url URL] [--output PATH]
+    virtos-pxeos haproxy  [--url URL] [--output PATH]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import textwrap
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+# Default PxeOS endpoint
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8443
+DEFAULT_SCHEME = "http"
+
+
+def discover_pxeos(
+    config_path: Optional[str] = None,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Discover PxeOS instance via config file, CLI args, or mDNS.
+
+    Priority order:
+    1. Explicit host/port arguments
+    2. Config file (TOML)
+    3. mDNS discovery (if zeroconf is available)
+    4. Defaults (127.0.0.1:8443)
+
+    Returns a dict with keys: host, port, scheme, base_url.
+    """
+    # 1. Explicit arguments take priority
+    if host and port:
+        scheme = DEFAULT_SCHEME
+        return {
+            "host": host,
+            "port": port,
+            "scheme": scheme,
+            "base_url": f"{scheme}://{host}:{port}",
+        }
+
+    # 2. Try config file
+    if config_path:
+        result = _discover_from_config(config_path)
+        if result:
+            return result
+
+    # 3. Try mDNS
+    result = _discover_via_mdns()
+    if result:
+        return result
+
+    # 4. Defaults
+    resolved_host = host or DEFAULT_HOST
+    resolved_port = port or DEFAULT_PORT
+    return {
+        "host": resolved_host,
+        "port": resolved_port,
+        "scheme": DEFAULT_SCHEME,
+        "base_url": f"{DEFAULT_SCHEME}://{resolved_host}:{resolved_port}",
+    }
+
+
+def _discover_from_config(
+    config_path: str,
+) -> Optional[Dict[str, Any]]:
+    """Read PxeOS host/port from a TOML config file."""
+    path = Path(config_path)
+    if not path.exists():
+        return None
+
+    try:
+        _tomllib = _import_tomllib()
+        if _tomllib is None:
+            return None
+        with open(path, "rb") as fh:
+            data = _tomllib.load(fh)
+    except Exception:
+        return None
+
+    server = data.get("server", {})
+    host = server.get("host", DEFAULT_HOST)
+    port = server.get("port", DEFAULT_PORT)
+
+    if host in ("0.0.0.0", "::"):
+        host = "127.0.0.1"
+
+    tls_cert = server.get("tls_cert")
+    scheme = "https" if tls_cert else "http"
+
+    return {
+        "host": host,
+        "port": port,
+        "scheme": scheme,
+        "base_url": f"{scheme}://{host}:{port}",
+    }
+
+
+def _discover_via_mdns() -> Optional[Dict[str, Any]]:
+    """Try to find PxeOS via mDNS (requires zeroconf)."""
+    try:
+        from pxeos.discovery import discover_pxeos as mdns_discover
+
+        instances = mdns_discover(timeout=3.0)
+        if instances:
+            inst = instances[0]
+            scheme = DEFAULT_SCHEME
+            return {
+                "host": inst["host"],
+                "port": inst["port"],
+                "scheme": scheme,
+                "base_url": f"{scheme}://{inst['host']}:{inst['port']}",
+            }
+    except ImportError:
+        pass
+    return None
+
+
+def _import_tomllib():
+    """Import tomllib (3.11+) or tomli fallback."""
+    import sys as _sys
+
+    if _sys.version_info >= (3, 11):
+        import tomllib
+
+        return tomllib
+    try:
+        import tomllib
+
+        return tomllib
+    except ImportError:
+        pass
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+
+        return tomllib
+    except ImportError:
+        return None
+
+
+def check_health(base_url: str) -> Dict[str, Any]:
+    """Verify PxeOS is healthy by calling /api/v1/health.
+
+    Returns the parsed JSON response.
+    Raises RuntimeError on failure.
+    """
+    url = f"{base_url}/api/v1/health"
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+            if data.get("status") != "ok":
+                raise RuntimeError(
+                    f"PxeOS health check returned status: "
+                    f"{data.get('status')}"
+                )
+            return data
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(
+            f"PxeOS health check failed: HTTP {exc.code}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            f"cannot reach PxeOS at {url}: {exc.reason}"
+        ) from exc
+
+
+def generate_nginx_config(
+    base_url: str,
+    output_path: Optional[str] = None,
+) -> str:
+    """Generate nginx reverse proxy config for VirtOS.
+
+    Returns the config as a string. If output_path is given,
+    also writes it to that file.
+    """
+    config = textwrap.dedent(f"""\
+        # VirtOS -> PxeOS reverse proxy
+        # Generated by virtos-pxeos bridge
+        # PxeOS upstream: {base_url}
+
+        upstream pxeos-upstream {{
+            server {_extract_host_port(base_url)};
+        }}
+
+        location /api/v1/pxe/ {{
+            proxy_pass {base_url}/api/v1/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            # Pass through auth headers
+            proxy_set_header Authorization $http_authorization;
+
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 300s;
+            proxy_send_timeout 300s;
+        }}
+    """)
+
+    if output_path:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_text(config)
+
+    return config
+
+
+def generate_haproxy_config(
+    base_url: str,
+    output_path: Optional[str] = None,
+) -> str:
+    """Generate HAProxy config snippet for VirtOS.
+
+    Returns the config as a string. If output_path is given,
+    also writes it to that file.
+    """
+    host_port = _extract_host_port(base_url)
+    config = textwrap.dedent(f"""\
+        # VirtOS -> PxeOS HAProxy backend
+        # Generated by virtos-pxeos bridge
+        # PxeOS upstream: {base_url}
+
+        backend pxeos
+            mode http
+            option httpchk GET /api/v1/health
+            http-check expect status 200
+            server pxeos1 {host_port} check inter 10s
+            http-request set-path %[path,regsub(^/api/v1/pxe/,/api/v1/)]
+    """)
+
+    if output_path:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_text(config)
+
+    return config
+
+
+def _extract_host_port(url: str) -> str:
+    """Extract host:port from a URL string."""
+    # Strip scheme
+    if "://" in url:
+        url = url.split("://", 1)[1]
+    # Strip path
+    if "/" in url:
+        url = url.split("/", 1)[0]
+    return url
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="virtos-pxeos",
+        description="VirtOS-PxeOS bridge: discover and configure proxy",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    # discover
+    disc = sub.add_parser(
+        "discover", help="discover PxeOS instance"
+    )
+    disc.add_argument(
+        "--config", dest="config_path",
+        help="path to PxeOS config file",
+    )
+    disc.add_argument("--host", help="PxeOS host")
+    disc.add_argument(
+        "--port", type=int, help="PxeOS port"
+    )
+
+    # health
+    hlth = sub.add_parser(
+        "health", help="check PxeOS health"
+    )
+    hlth.add_argument(
+        "--url",
+        default=f"{DEFAULT_SCHEME}://{DEFAULT_HOST}:{DEFAULT_PORT}",
+        help="PxeOS base URL",
+    )
+
+    # nginx
+    ngx = sub.add_parser(
+        "nginx", help="generate nginx config"
+    )
+    ngx.add_argument(
+        "--url",
+        default=f"{DEFAULT_SCHEME}://{DEFAULT_HOST}:{DEFAULT_PORT}",
+        help="PxeOS base URL",
+    )
+    ngx.add_argument(
+        "--output", "-o", help="output file path"
+    )
+
+    # haproxy
+    hap = sub.add_parser(
+        "haproxy", help="generate HAProxy config"
+    )
+    hap.add_argument(
+        "--url",
+        default=f"{DEFAULT_SCHEME}://{DEFAULT_HOST}:{DEFAULT_PORT}",
+        help="PxeOS base URL",
+    )
+    hap.add_argument(
+        "--output", "-o", help="output file path"
+    )
+
+    return parser
+
+
+def main(argv=None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    if not args.command:
+        parser.print_help()
+        return 1
+
+    if args.command == "discover":
+        info = discover_pxeos(
+            config_path=args.config_path,
+            host=args.host,
+            port=args.port,
+        )
+        print(json.dumps(info, indent=2))
+        return 0
+
+    elif args.command == "health":
+        try:
+            data = check_health(args.url)
+            print(json.dumps(data, indent=2))
+            return 0
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    elif args.command == "nginx":
+        config = generate_nginx_config(
+            args.url, args.output
+        )
+        if not args.output:
+            print(config)
+        else:
+            print(f"nginx config written to {args.output}")
+        return 0
+
+    elif args.command == "haproxy":
+        config = generate_haproxy_config(
+            args.url, args.output
+        )
+        if not args.output:
+            print(config)
+        else:
+            print(f"HAProxy config written to {args.output}")
+        return 0
+
+    parser.print_help()
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
