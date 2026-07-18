@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -15,6 +15,7 @@ from pxeos.engine import ProvisioningEngine
 from pxeos.matcher import HostMatcher
 from pxeos.models import BootFirmware, ProvisionProfile
 from pxeos.registry import PluginRegistry
+from pxeos.auth import ApiKeyStore, Role, get_key_store, init_auth, require_role
 from pxeos.state import ProvisionState, ProvisionTracker
 
 app = FastAPI(
@@ -106,6 +107,23 @@ def init_app(
     _config = config
     _engine = ProvisioningEngine(registry, matcher, config)
 
+    key_store = ApiKeyStore(config.data_dir)
+    init_auth(config.auth_enabled, key_store)
+
+    if config.auth_enabled and key_store.is_empty():
+        import sys
+
+        raw_key, _ = key_store.create_key(
+            "bootstrap-admin", Role.ADMIN
+        )
+        print(
+            f"\n*** BOOTSTRAP: Auth enabled but no keys "
+            f"found. Created admin key: {raw_key}\n"
+            f"*** Save this key and create proper keys "
+            f"via the API or CLI.\n",
+            file=sys.stderr,
+        )
+
     from pxeos.web.routes import router as web_router
     app.include_router(web_router)
 
@@ -135,7 +153,10 @@ class NetbootStatusResponse(BaseModel):
     netboot_enabled: bool
 
 
-@app.post("/api/v1/provision/{mac}/disable-netboot")
+@app.post(
+    "/api/v1/provision/{mac}/disable-netboot",
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
 def disable_netboot(mac: str) -> Dict[str, Any]:
     """Disable PXE netboot for a MAC (boot-once: after successful provisioning)."""
     if _engine is None:
@@ -151,7 +172,10 @@ def disable_netboot(mac: str) -> Dict[str, Any]:
         raise HTTPException(404, str(exc))
 
 
-@app.post("/api/v1/provision/{mac}/enable-netboot")
+@app.post(
+    "/api/v1/provision/{mac}/enable-netboot",
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
 def enable_netboot(mac: str) -> Dict[str, Any]:
     """Re-enable PXE netboot for a MAC (for re-provisioning)."""
     if _engine is None:
@@ -170,6 +194,7 @@ def enable_netboot(mac: str) -> Dict[str, Any]:
 @app.get(
     "/api/v1/provision/{mac}/netboot-status",
     response_model=NetbootStatusResponse,
+    dependencies=[Depends(require_role(Role.VIEWER))],
 )
 def get_netboot_status(mac: str) -> Dict[str, Any]:
     """Return the current netboot status for a MAC."""
@@ -195,6 +220,7 @@ def get_autoinstall(mac: str) -> Response:
 @app.get(
     "/api/v1/profiles",
     response_model=List[ProfileResponse],
+    dependencies=[Depends(require_role(Role.VIEWER))],
 )
 def list_profiles() -> List[Dict[str, Any]]:
     if _config is None:
@@ -226,6 +252,7 @@ def list_profiles() -> List[Dict[str, Any]]:
 @app.get(
     "/api/v1/distros",
     response_model=List[DistroResponse],
+    dependencies=[Depends(require_role(Role.VIEWER))],
 )
 def list_distros() -> List[Dict[str, str]]:
     if _config is None:
@@ -246,6 +273,7 @@ def list_distros() -> List[Dict[str, str]]:
     "/api/v1/hosts",
     response_model=HostRuleResponse,
     status_code=201,
+    dependencies=[Depends(require_role(Role.ADMIN))],
 )
 def register_host(rule: HostRuleRequest) -> Dict[str, Any]:
     if _config is None:
@@ -331,6 +359,7 @@ def health_check() -> Dict[str, Any]:
 @app.get(
     "/api/v1/provision/{mac}/status",
     response_model=ProvisionStatusResponse,
+    dependencies=[Depends(require_role(Role.VIEWER))],
 )
 def get_provision_status(mac: str) -> Dict[str, Any]:
     if _engine is None:
@@ -382,6 +411,7 @@ def mark_provision_failed(
 @app.get(
     "/api/v1/provision",
     response_model=List[ProvisionStatusResponse],
+    dependencies=[Depends(require_role(Role.VIEWER))],
 )
 def list_provisions() -> List[Dict[str, Any]]:
     if _engine is None:
@@ -465,6 +495,7 @@ def _profile_from_cloud_init_request(
 @app.post(
     "/api/v1/cloud-init/generate",
     response_model=CloudInitResponse,
+    dependencies=[Depends(require_role(Role.OPERATOR))],
 )
 def generate_cloud_init(
     req: CloudInitRequest,
@@ -480,7 +511,10 @@ def generate_cloud_init(
     }
 
 
-@app.post("/api/v1/cloud-init/iso")
+@app.post(
+    "/api/v1/cloud-init/iso",
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
 def generate_cloud_init_iso(req: CloudInitRequest) -> Response:
     from pxeos.cloud_init import create_config_drive
 
@@ -505,7 +539,10 @@ def generate_cloud_init_iso(req: CloudInitRequest) -> Response:
 _cloud_init_store: Dict[str, Dict[str, str]] = {}
 
 
-@app.post("/api/v1/cloud-init/register")
+@app.post(
+    "/api/v1/cloud-init/register",
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
 def register_cloud_init(
     req: CloudInitRequest,
 ) -> Dict[str, str]:
@@ -525,7 +562,10 @@ def register_cloud_init(
     return {"instance_id": instance_id, "status": "registered"}
 
 
-@app.get("/api/v1/cloud-init/{instance_id}/user-data")
+@app.get(
+    "/api/v1/cloud-init/{instance_id}/user-data",
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
 def get_cloud_init_user_data(instance_id: str) -> Response:
     entry = _cloud_init_store.get(instance_id)
     if not entry:
@@ -533,7 +573,10 @@ def get_cloud_init_user_data(instance_id: str) -> Response:
     return Response(content=entry["user_data"], media_type="text/yaml")
 
 
-@app.get("/api/v1/cloud-init/{instance_id}/meta-data")
+@app.get(
+    "/api/v1/cloud-init/{instance_id}/meta-data",
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
 def get_cloud_init_meta_data(instance_id: str) -> Response:
     entry = _cloud_init_store.get(instance_id)
     if not entry:
@@ -541,7 +584,10 @@ def get_cloud_init_meta_data(instance_id: str) -> Response:
     return Response(content=entry["meta_data"], media_type="text/yaml")
 
 
-@app.get("/api/v1/cloud-init/{instance_id}/network-config")
+@app.get(
+    "/api/v1/cloud-init/{instance_id}/network-config",
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
 def get_cloud_init_network_config(instance_id: str) -> Response:
     entry = _cloud_init_store.get(instance_id)
     if not entry:
@@ -574,6 +620,7 @@ class ImportResponse(BaseModel):
 @app.post(
     "/api/v1/import/upload",
     response_model=ImportResponse,
+    dependencies=[Depends(require_role(Role.OPERATOR))],
 )
 async def import_upload(
     file: UploadFile = File(...),
@@ -634,6 +681,7 @@ async def import_upload(
 @app.post(
     "/api/v1/import/fetch",
     response_model=ImportResponse,
+    dependencies=[Depends(require_role(Role.OPERATOR))],
 )
 def import_fetch(req: ImportFetchRequest) -> Dict[str, Any]:
     if _config is None or _registry is None:
@@ -707,7 +755,11 @@ def _get_secrets_provider():
     return FileSecretsProvider(_config.data_dir)
 
 
-@app.post("/api/v1/secrets", status_code=201)
+@app.post(
+    "/api/v1/secrets",
+    status_code=201,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
 def set_secret(req: SecretSetRequest) -> Dict[str, str]:
     provider = _get_secrets_provider()
     provider.set(req.key, req.value)
@@ -717,6 +769,7 @@ def set_secret(req: SecretSetRequest) -> Dict[str, str]:
 @app.get(
     "/api/v1/secrets/{key}",
     response_model=SecretValueResponse,
+    dependencies=[Depends(require_role(Role.ADMIN))],
 )
 def get_secret(key: str) -> Dict[str, str]:
     provider = _get_secrets_provider()
@@ -726,7 +779,10 @@ def get_secret(key: str) -> Dict[str, str]:
     return {"key": key, "value": value}
 
 
-@app.delete("/api/v1/secrets/{key}")
+@app.delete(
+    "/api/v1/secrets/{key}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
 def delete_secret(key: str) -> Dict[str, str]:
     provider = _get_secrets_provider()
     provider.delete(key)
@@ -736,6 +792,7 @@ def delete_secret(key: str) -> Dict[str, str]:
 @app.get(
     "/api/v1/secrets",
     response_model=SecretKeyResponse,
+    dependencies=[Depends(require_role(Role.VIEWER))],
 )
 def list_secrets() -> Dict[str, List[str]]:
     provider = _get_secrets_provider()
@@ -814,6 +871,7 @@ def _get_named_store():
 @app.get(
     "/api/v1/named/distros",
     response_model=List[NamedDistroResponse],
+    dependencies=[Depends(require_role(Role.VIEWER))],
 )
 def list_named_distros() -> List[Dict[str, Any]]:
     from dataclasses import asdict
@@ -826,6 +884,7 @@ def list_named_distros() -> List[Dict[str, Any]]:
     "/api/v1/named/distros",
     response_model=NamedDistroResponse,
     status_code=201,
+    dependencies=[Depends(require_role(Role.ADMIN))],
 )
 def create_named_distro(
     req: NamedDistroRequest,
@@ -850,6 +909,7 @@ def create_named_distro(
 @app.get(
     "/api/v1/named/distros/{name}",
     response_model=NamedDistroResponse,
+    dependencies=[Depends(require_role(Role.VIEWER))],
 )
 def get_named_distro(name: str) -> Dict[str, Any]:
     from dataclasses import asdict
@@ -867,6 +927,7 @@ def get_named_distro(name: str) -> Dict[str, Any]:
 @app.put(
     "/api/v1/named/distros/{name}",
     response_model=NamedDistroResponse,
+    dependencies=[Depends(require_role(Role.ADMIN))],
 )
 def update_named_distro(
     name: str, updates: Dict[str, Any]
@@ -883,7 +944,10 @@ def update_named_distro(
     return asdict(distro)
 
 
-@app.delete("/api/v1/named/distros/{name}")
+@app.delete(
+    "/api/v1/named/distros/{name}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
 def delete_named_distro(name: str) -> Dict[str, str]:
     store = _get_named_store()
     try:
@@ -901,6 +965,7 @@ def delete_named_distro(name: str) -> Dict[str, str]:
 @app.get(
     "/api/v1/named/hosts",
     response_model=List[NamedHostResponse],
+    dependencies=[Depends(require_role(Role.VIEWER))],
 )
 def list_named_hosts() -> List[Dict[str, Any]]:
     from dataclasses import asdict
@@ -913,6 +978,7 @@ def list_named_hosts() -> List[Dict[str, Any]]:
     "/api/v1/named/hosts",
     response_model=NamedHostResponse,
     status_code=201,
+    dependencies=[Depends(require_role(Role.ADMIN))],
 )
 def create_named_host(
     req: NamedHostRequest,
@@ -937,6 +1003,7 @@ def create_named_host(
 @app.get(
     "/api/v1/named/hosts/{name}",
     response_model=NamedHostResponse,
+    dependencies=[Depends(require_role(Role.VIEWER))],
 )
 def get_named_host(name: str) -> Dict[str, Any]:
     from dataclasses import asdict
@@ -954,6 +1021,7 @@ def get_named_host(name: str) -> Dict[str, Any]:
 @app.put(
     "/api/v1/named/hosts/{name}",
     response_model=NamedHostResponse,
+    dependencies=[Depends(require_role(Role.ADMIN))],
 )
 def update_named_host(
     name: str, updates: Dict[str, Any]
@@ -970,7 +1038,10 @@ def update_named_host(
     return asdict(host)
 
 
-@app.delete("/api/v1/named/hosts/{name}")
+@app.delete(
+    "/api/v1/named/hosts/{name}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
 def delete_named_host(name: str) -> Dict[str, str]:
     store = _get_named_store()
     try:
@@ -979,4 +1050,90 @@ def delete_named_host(name: str) -> Dict[str, str]:
         raise HTTPException(400, str(exc))
     if not deleted:
         raise HTTPException(404, f"host {name!r} not found")
+    return {"name": name, "status": "deleted"}
+
+
+# ---------------------------------------------------------------
+# API key management endpoints (admin only)
+# ---------------------------------------------------------------
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str
+    role: str = "viewer"
+
+
+class ApiKeyCreateResponse(BaseModel):
+    name: str
+    role: str
+    raw_key: str
+
+
+class ApiKeyListItem(BaseModel):
+    name: str
+    role: str
+    enabled: bool
+    created_at: float
+    last_used_at: Optional[float] = None
+
+
+@app.post(
+    "/api/v1/auth/keys",
+    response_model=ApiKeyCreateResponse,
+    status_code=201,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def create_api_key(
+    req: ApiKeyCreateRequest,
+) -> Dict[str, Any]:
+    store = get_key_store()
+    if store is None:
+        raise HTTPException(503, "auth not initialized")
+    try:
+        role = Role(req.role)
+    except ValueError:
+        raise HTTPException(
+            400, f"invalid role: {req.role!r}"
+        )
+    raw_key, api_key = store.create_key(req.name, role)
+    return {
+        "name": api_key.name,
+        "role": api_key.role.value,
+        "raw_key": raw_key,
+    }
+
+
+@app.get(
+    "/api/v1/auth/keys",
+    response_model=List[ApiKeyListItem],
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def list_api_keys() -> List[Dict[str, Any]]:
+    store = get_key_store()
+    if store is None:
+        raise HTTPException(503, "auth not initialized")
+    return [
+        {
+            "name": k.name,
+            "role": k.role.value,
+            "enabled": k.enabled,
+            "created_at": k.created_at,
+            "last_used_at": k.last_used_at,
+        }
+        for k in store.list_keys()
+    ]
+
+
+@app.delete(
+    "/api/v1/auth/keys/{name}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def delete_api_key(name: str) -> Dict[str, str]:
+    store = get_key_store()
+    if store is None:
+        raise HTTPException(503, "auth not initialized")
+    if not store.delete(name):
+        raise HTTPException(
+            404, f"API key {name!r} not found"
+        )
     return {"name": name, "status": "deleted"}

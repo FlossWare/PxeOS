@@ -56,6 +56,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_distro_parser(sub)
     _add_secret_parser(sub)
     _add_named_host_parser(sub)
+    _add_auth_parser(sub)
 
     return parser
 
@@ -1347,8 +1348,106 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _cmd_secret(args, config)
     elif args.command == "named-host":
         return _cmd_named_host(args, config)
+    elif args.command == "auth":
+        return _cmd_auth(args, config)
 
     parser.print_help()
+    return 1
+
+
+def _add_auth_parser(
+    sub: argparse._SubParsersAction,
+) -> None:
+    auth = sub.add_parser(
+        "auth", help="manage API key authentication"
+    )
+    auth_sub = auth.add_subparsers(dest="auth_action")
+
+    create = auth_sub.add_parser(
+        "create-key", help="create a new API key"
+    )
+    create.add_argument(
+        "--name", required=True, help="key name/label"
+    )
+    create.add_argument(
+        "--role",
+        default="viewer",
+        choices=["viewer", "operator", "admin"],
+        help="role to assign (default: viewer)",
+    )
+
+    auth_sub.add_parser(
+        "list-keys", help="list API keys"
+    )
+
+    revoke = auth_sub.add_parser(
+        "revoke-key", help="disable an API key"
+    )
+    revoke.add_argument("name", help="key name to revoke")
+
+    delete = auth_sub.add_parser(
+        "delete-key", help="delete an API key"
+    )
+    delete.add_argument("name", help="key name to delete")
+
+
+def _cmd_auth(
+    args: argparse.Namespace, config: PxeOSConfig
+) -> int:
+    from pxeos.auth import ApiKeyStore, Role
+
+    key_store = ApiKeyStore(config.data_dir)
+
+    if args.auth_action == "create-key":
+        role = Role(args.role)
+        raw_key, api_key = key_store.create_key(
+            args.name, role
+        )
+        print(f"API key created:")
+        print(f"  Name: {api_key.name}")
+        print(f"  Role: {api_key.role.value}")
+        print(f"  Key:  {raw_key}")
+        print()
+        print(
+            "Save this key -- it cannot be "
+            "retrieved later."
+        )
+        return 0
+
+    elif args.auth_action == "list-keys":
+        keys = key_store.list_keys()
+        if not keys:
+            print("no API keys configured")
+            return 0
+        fmt = "{:<20s} {:<10s} {:<8s}"
+        print(fmt.format("NAME", "ROLE", "ENABLED"))
+        print("-" * 40)
+        for k in keys:
+            print(
+                fmt.format(
+                    k.name, k.role.value, str(k.enabled)
+                )
+            )
+        return 0
+
+    elif args.auth_action == "revoke-key":
+        if key_store.revoke(args.name):
+            print(f"revoked API key: {args.name}")
+            return 0
+        print(f"API key not found: {args.name}")
+        return 1
+
+    elif args.auth_action == "delete-key":
+        if key_store.delete(args.name):
+            print(f"deleted API key: {args.name}")
+            return 0
+        print(f"API key not found: {args.name}")
+        return 1
+
+    print(
+        "usage: pxeos auth "
+        "{create-key|list-keys|revoke-key|delete-key}"
+    )
     return 1
 
 

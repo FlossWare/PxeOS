@@ -33,6 +33,7 @@ class PxeOSConfig:
     data_dir: Path = field(
         default_factory=lambda: Path("/etc/pxeos")
     )
+    auth_enabled: bool = False
 
 
 def load_config(path: Path) -> PxeOSConfig:
@@ -41,6 +42,7 @@ def load_config(path: Path) -> PxeOSConfig:
 
     server = data.get("server", {})
     paths = data.get("paths", {})
+    auth = data.get("auth", {})
 
     tls_cert = server.get("tls_cert")
     tls_key = server.get("tls_key")
@@ -55,6 +57,7 @@ def load_config(path: Path) -> PxeOSConfig:
             paths.get("distro_root", "/srv/pxeos/distros")
         ),
         data_dir=Path(paths.get("data_dir", "/etc/pxeos")),
+        auth_enabled=auth.get("enabled", False),
     )
 
 
