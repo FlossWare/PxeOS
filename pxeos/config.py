@@ -19,6 +19,22 @@ else:
 
 
 @dataclass
+class RateLimitSettings:
+    """Rate-limiting configuration (disabled by default)."""
+
+    enabled: bool = False
+    # PXE endpoints (boot/autoinstall) -- higher limits for machine traffic
+    pxe_requests_per_minute: float = 300.0
+    pxe_burst: int = 50
+    # General API endpoints
+    api_requests_per_minute: float = 60.0
+    api_burst: int = 20
+    # Auth endpoints -- stricter to prevent brute force
+    auth_requests_per_minute: float = 10.0
+    auth_burst: int = 5
+
+
+@dataclass
 class PxeOSConfig:
     server_host: str = "0.0.0.0"
     server_port: int = 8443
@@ -36,6 +52,9 @@ class PxeOSConfig:
     auth_enabled: bool = False
     service_name: str = "pxeos"
     enable_discovery: bool = False
+    rate_limit: RateLimitSettings = field(
+        default_factory=RateLimitSettings
+    )
 
 
 def load_config(path: Path) -> PxeOSConfig:
@@ -55,9 +74,26 @@ def load_config(path: Path) -> PxeOSConfig:
     paths = data.get("paths", {})
     auth = data.get("auth", {})
     discovery = data.get("discovery", {})
+    rl = data.get("rate_limit", {})
 
     tls_cert = server.get("tls_cert")
     tls_key = server.get("tls_key")
+
+    rate_limit = RateLimitSettings(
+        enabled=rl.get("enabled", False),
+        pxe_requests_per_minute=float(
+            rl.get("pxe_requests_per_minute", 300)
+        ),
+        pxe_burst=int(rl.get("pxe_burst", 50)),
+        api_requests_per_minute=float(
+            rl.get("api_requests_per_minute", 60)
+        ),
+        api_burst=int(rl.get("api_burst", 20)),
+        auth_requests_per_minute=float(
+            rl.get("auth_requests_per_minute", 10)
+        ),
+        auth_burst=int(rl.get("auth_burst", 5)),
+    )
 
     return PxeOSConfig(
         server_host=server.get("host", "0.0.0.0"),
@@ -72,6 +108,7 @@ def load_config(path: Path) -> PxeOSConfig:
         auth_enabled=auth.get("enabled", False),
         service_name=discovery.get("service_name", "pxeos"),
         enable_discovery=discovery.get("enabled", False),
+        rate_limit=rate_limit,
     )
 
 
