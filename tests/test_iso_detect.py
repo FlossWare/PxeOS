@@ -1030,9 +1030,11 @@ class TestImportIsoDetection:
     @patch("pxeos.importer.tempfile.mkdtemp")
     @patch("pxeos.importer.detect_iso")
     def test_detection_fills_empty_values(
-        self, mock_detect, mock_mkdtemp, mock_run, tmp_path, capsys,
+        self, mock_detect, mock_mkdtemp, mock_run, tmp_path, caplog,
     ):
         """When os_family/vendor/version are empty, use detected values."""
+        import logging
+
         from pxeos.importer import import_iso
         from pxeos.models import DistroAssets
 
@@ -1049,20 +1051,23 @@ class TestImportIsoDetection:
         mock_registry = MagicMock()
         mock_registry.get.return_value = mock_plugin
 
-        result = import_iso(
-            Path("/images/test.iso"),
-            "",       # empty os_family
-            "",       # empty vendor
-            "",       # empty version
-            "x86_64",
-            mock_registry,
-            tmp_path,
-        )
+        with caplog.at_level(logging.INFO, logger="pxeos.importer"):
+            result = import_iso(
+                Path("/images/test.iso"),
+                "",       # empty os_family
+                "",       # empty vendor
+                "",       # empty version
+                "x86_64",
+                mock_registry,
+                tmp_path,
+            )
 
         # Detection was used
         mock_registry.get.assert_called_once_with("fedora")
-        captured = capsys.readouterr()
-        assert "Detected: fedora/fedora/42" in captured.out
+        log_text = caplog.text
+        assert "os_family=fedora" in log_text
+        assert "vendor=fedora" in log_text
+        assert "version=42" in log_text
 
         assert result is fake_assets
 
@@ -1070,9 +1075,11 @@ class TestImportIsoDetection:
     @patch("pxeos.importer.tempfile.mkdtemp")
     @patch("pxeos.importer.detect_iso")
     def test_user_values_override_detection(
-        self, mock_detect, mock_mkdtemp, mock_run, tmp_path, capsys,
+        self, mock_detect, mock_mkdtemp, mock_run, tmp_path, caplog,
     ):
         """User-provided values take precedence over detected ones."""
+        import logging
+
         from pxeos.importer import import_iso
         from pxeos.models import DistroAssets
 
@@ -1090,15 +1097,16 @@ class TestImportIsoDetection:
         mock_registry = MagicMock()
         mock_registry.get.return_value = mock_plugin
 
-        result = import_iso(
-            Path("/images/test.iso"),
-            "fedora",   # user-provided os_family
-            "rhel",     # user-provided vendor
-            "9",        # user-provided version
-            "x86_64",
-            mock_registry,
-            tmp_path,
-        )
+        with caplog.at_level(logging.INFO, logger="pxeos.importer"):
+            result = import_iso(
+                Path("/images/test.iso"),
+                "fedora",   # user-provided os_family
+                "rhel",     # user-provided vendor
+                "9",        # user-provided version
+                "x86_64",
+                mock_registry,
+                tmp_path,
+            )
 
         # User-provided values win
         mock_registry.get.assert_called_once_with("fedora")
@@ -1107,9 +1115,11 @@ class TestImportIsoDetection:
         dest_arg = call_args[1]
         assert "rhel-9-x86_64" in str(dest_arg)
 
-        # Detection message was still printed
-        captured = capsys.readouterr()
-        assert "Detected: fedora/fedora/42" in captured.out
+        # Detection message was still logged
+        log_text = caplog.text
+        assert "os_family=fedora" in log_text
+        assert "vendor=fedora" in log_text
+        assert "version=42" in log_text
 
     @patch("pxeos.importer.subprocess.run")
     @patch("pxeos.importer.tempfile.mkdtemp")
@@ -1153,9 +1163,11 @@ class TestImportIsoDetection:
     @patch("pxeos.importer.tempfile.mkdtemp")
     @patch("pxeos.importer.detect_iso")
     def test_no_detection_uses_provided_values(
-        self, mock_detect, mock_mkdtemp, mock_run, tmp_path, capsys,
+        self, mock_detect, mock_mkdtemp, mock_run, tmp_path, caplog,
     ):
         """When detect_iso returns None, provided values are used."""
+        import logging
+
         from pxeos.importer import import_iso
         from pxeos.models import DistroAssets
 
@@ -1172,19 +1184,19 @@ class TestImportIsoDetection:
         mock_registry = MagicMock()
         mock_registry.get.return_value = mock_plugin
 
-        import_iso(
-            Path("/images/test.iso"),
-            "debian",
-            "debian",
-            "12",
-            "amd64",
-            mock_registry,
-            tmp_path,
-        )
+        with caplog.at_level(logging.INFO, logger="pxeos.importer"):
+            import_iso(
+                Path("/images/test.iso"),
+                "debian",
+                "debian",
+                "12",
+                "amd64",
+                mock_registry,
+                tmp_path,
+            )
 
-        # No "Detected" message printed
-        captured = capsys.readouterr()
-        assert "Detected:" not in captured.out
+        # No ISO detection message logged (detect_iso returned None)
+        assert "ISO detected" not in caplog.text
 
         mock_registry.get.assert_called_once_with("debian")
 

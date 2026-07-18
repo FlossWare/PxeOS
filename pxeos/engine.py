@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -10,6 +11,8 @@ from pxeos.matcher import HostMatcher
 from pxeos.models import BootAssets, HostRule, ProvisionProfile
 from pxeos.registry import PluginRegistry
 from pxeos.state import ProvisionState, ProvisionTracker
+
+logger = logging.getLogger("pxeos.engine")
 
 # iPXE script returned when netboot is disabled (boot-once complete).
 # ``exit`` tells iPXE to fall through to the next boot device (local disk).
@@ -39,6 +42,12 @@ class ProvisioningEngine:
         groups: Optional[list[str]] = None,
         arch: Optional[str] = None,
     ) -> BootAssets:
+        from pxeos.metrics import provisions_total, active_provisions
+
+        logger.info(
+            "Provision request mac=%s hostname=%s",
+            mac, hostname,
+        )
         rule = self._resolve_rule(
             mac, hostname, subnet, serial, groups, arch
         )
@@ -47,17 +56,40 @@ class ProvisioningEngine:
 
         errors = plugin.validate_profile(profile)
         if errors:
+            logger.warning(
+                "Profile validation failed for %s: %s",
+                profile.name, "; ".join(errors),
+            )
+            provisions_total.inc(
+                os_family=rule.os_family, status="error",
+            )
             raise ValueError(
                 f"invalid profile {profile.name!r}: "
                 + "; ".join(errors)
             )
 
+        logger.info(
+            "Provisioning mac=%s profile=%s os=%s/%s",
+            mac, rule.profile, rule.os_family, rule.os_version,
+        )
+        provisions_total.inc(
+            os_family=rule.os_family, status="success",
+        )
+        active_provisions.inc()
         return plugin.boot_assets(profile)
 
     def render_ipxe_script(self, mac: str) -> str:
+        from pxeos.metrics import boot_requests_total
+
+        boot_requests_total.inc()
+
         # Boot-once check: if netboot has been disabled for this MAC,
         # return a local-boot script so the machine boots from disk.
         if not self.tracker.is_netboot_enabled(mac):
+            logger.info(
+                "Netboot disabled for mac=%s, returning local boot",
+                mac,
+            )
             return LOCAL_BOOT_SCRIPT
 
         rule = self._resolve_rule(mac)
@@ -79,6 +111,10 @@ class ProvisioningEngine:
                 os_version=rule.os_version,
             )
         self.tracker.transition(mac, ProvisionState.BOOTING)
+        logger.info(
+            "Boot script generated mac=%s profile=%s os=%s/%s",
+            mac, rule.profile, rule.os_family, rule.os_version,
+        )
 
         lines = [
             "#!ipxe",
@@ -114,6 +150,10 @@ class ProvisioningEngine:
                 os_version=rule.os_version,
             )
         self.tracker.transition(mac, ProvisionState.INSTALLING)
+        logger.info(
+            "Autoinstall requested mac=%s state=installing",
+            mac,
+        )
 
         return plugin.generate_autoinstall(profile)
 

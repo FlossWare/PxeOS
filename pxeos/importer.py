@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
 import tempfile
@@ -11,6 +12,8 @@ from pathlib import Path
 from pxeos.iso_detect import detect_iso, is_live_iso
 from pxeos.models import DistroAssets
 from pxeos.registry import PluginRegistry
+
+logger = logging.getLogger("pxeos.importer")
 
 
 def _distro_dir(
@@ -35,6 +38,12 @@ def import_iso(
     distro_root: Path,
     live: bool = False,
 ) -> DistroAssets:
+    from pxeos.metrics import import_operations_total
+
+    logger.info(
+        "ISO import started path=%s os_family=%s vendor=%s version=%s",
+        iso_path, os_family, vendor, version,
+    )
     mount_point = Path(tempfile.mkdtemp(prefix="pxeos_mount_"))
     try:
         subprocess.run(
@@ -46,9 +55,10 @@ def import_iso(
         try:
             detected = detect_iso(mount_point, iso_path)
             if detected is not None:
-                print(
-                    f"Detected: {detected.os_family}/"
-                    f"{detected.vendor}/{detected.version}"
+                logger.info(
+                    "ISO detected os_family=%s vendor=%s version=%s",
+                    detected.os_family, detected.vendor,
+                    detected.version,
                 )
                 if not os_family:
                     os_family = detected.os_family
@@ -60,7 +70,7 @@ def import_iso(
             if not live:
                 live = is_live_iso(mount_point)
                 if live:
-                    print("Detected live ISO")
+                    logger.info("Detected live ISO")
 
             plugin = registry.get(os_family)
 
@@ -93,6 +103,14 @@ def import_iso(
     finally:
         mount_point.rmdir()
 
+    import_type = "live" if live else "iso"
+    import_operations_total.inc(
+        os_family=os_family, type=import_type,
+    )
+    logger.info(
+        "ISO import complete os_family=%s type=%s dest=%s",
+        os_family, import_type, dest,
+    )
     return assets
 
 
@@ -105,6 +123,12 @@ def import_url(
     registry: PluginRegistry,
     distro_root: Path,
 ) -> DistroAssets:
+    from pxeos.metrics import import_operations_total
+
+    logger.info(
+        "URL import started url=%s os_family=%s",
+        mirror_url, os_family,
+    )
     plugin = registry.get(os_family)
     dest = _distro_dir(distro_root, vendor or os_family, version, arch)
 
@@ -126,6 +150,13 @@ def import_url(
     repo_dir = dest / "repo"
     repo_dir.mkdir(parents=True, exist_ok=True)
 
+    import_operations_total.inc(
+        os_family=os_family, type="url",
+    )
+    logger.info(
+        "URL import complete os_family=%s dest=%s",
+        os_family, dest,
+    )
     return DistroAssets(
         kernel_path=kernel_file,
         initrd_path=initrd_file,
