@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
+from pxeos.logging_config import LoggingConfig
 from pxeos.models import BootFirmware, HostRule, ProvisionProfile
 
 if sys.version_info >= (3, 11):
@@ -55,6 +56,9 @@ class PxeOSConfig:
     rate_limit: RateLimitSettings = field(
         default_factory=RateLimitSettings
     )
+    logging: LoggingConfig = field(
+        default_factory=LoggingConfig
+    )
 
 
 def load_config(path: Path) -> PxeOSConfig:
@@ -75,6 +79,7 @@ def load_config(path: Path) -> PxeOSConfig:
     auth = data.get("auth", {})
     discovery = data.get("discovery", {})
     rl = data.get("rate_limit", {})
+    log = data.get("logging", {})
 
     tls_cert = server.get("tls_cert")
     tls_key = server.get("tls_key")
@@ -95,6 +100,18 @@ def load_config(path: Path) -> PxeOSConfig:
         auth_burst=int(rl.get("auth_burst", 5)),
     )
 
+    log_file_raw = log.get("log_file")
+    logging_config = LoggingConfig(
+        level=log.get("level", "INFO"),
+        json_format=log.get("json_format", False),
+        log_file=Path(log_file_raw) if log_file_raw else None,
+        max_bytes=int(log.get("max_bytes", 10_485_760)),
+        backup_count=int(log.get("backup_count", 5)),
+        syslog_enabled=log.get("syslog_enabled", False),
+        syslog_address=log.get("syslog_address", "/dev/log"),
+        journald_enabled=log.get("journald_enabled", False),
+    )
+
     return PxeOSConfig(
         server_host=server.get("host", "0.0.0.0"),
         server_port=server.get("port", 8443),
@@ -109,6 +126,7 @@ def load_config(path: Path) -> PxeOSConfig:
         service_name=discovery.get("service_name", "pxeos"),
         enable_discovery=discovery.get("enabled", False),
         rate_limit=rate_limit,
+        logging=logging_config,
     )
 
 
