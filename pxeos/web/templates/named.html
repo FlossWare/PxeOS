@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}PxeOS - Named Objects{% endblock %}
+{% block content %}
+<h2>Named Objects</h2>
+
+{% if flash %}
+<div class="flash flash-{{ flash.type }}">{{ flash.message }}</div>
+{% endif %}
+
+<div class="card">
+    <h3>Add Named Distro</h3>
+    <form hx-post="/web/named/distros" hx-target="#named-distro-list" hx-swap="innerHTML">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="distro_name">Name</label>
+                <input type="text" id="distro_name" name="name" required placeholder="fedora42-server">
+            </div>
+            <div class="form-group">
+                <label for="distro_os_family">OS Family</label>
+                <select id="distro_os_family" name="os_family" required>
+                    <option value="">Select...</option>
+                    {% for plugin in plugins %}
+                    <option value="{{ plugin }}">{{ plugin }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="distro_vendor">Vendor</label>
+                <input type="text" id="distro_vendor" name="vendor" required placeholder="fedora">
+            </div>
+            <div class="form-group">
+                <label for="distro_version">Version</label>
+                <input type="text" id="distro_version" name="version" required placeholder="42">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="distro_arch">Architecture</label>
+                <select id="distro_arch" name="arch">
+                    <option value="x86_64">x86_64</option>
+                    <option value="aarch64">aarch64</option>
+                    <option value="amd64">amd64</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="distro_kernel_path">Kernel Path</label>
+                <input type="text" id="distro_kernel_path" name="kernel_path" placeholder="images/pxeboot/vmlinuz">
+            </div>
+            <div class="form-group">
+                <label for="distro_initrd_path">Initrd Path</label>
+                <input type="text" id="distro_initrd_path" name="initrd_path" placeholder="images/pxeboot/initrd.img">
+            </div>
+            <div class="form-group">
+                <label for="distro_install_url">Install URL</label>
+                <input type="text" id="distro_install_url" name="install_url" placeholder="https://mirror.example.com/...">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="distro_comment">Comment</label>
+            <input type="text" id="distro_comment" name="comment" placeholder="Optional description">
+        </div>
+        <div class="actions">
+            <button type="submit" class="btn btn-primary">Add Distro</button>
+            <span class="htmx-indicator"><span class="spinner"></span></span>
+        </div>
+    </form>
+</div>
+
+<div class="card" id="named-distro-list">
+    <h3>Named Distros</h3>
+    {% if distros %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>OS</th>
+                <th>Vendor</th>
+                <th>Version</th>
+                <th>Arch</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for d in distros %}
+            <tr>
+                <td>{{ d.name }}</td>
+                <td>{{ d.os_family }}</td>
+                <td>{{ d.vendor }}</td>
+                <td>{{ d.version }}</td>
+                <td>{{ d.arch }}</td>
+                <td>
+                    <button class="btn btn-danger btn-sm"
+                            hx-delete="/web/named/distros/{{ d.name }}"
+                            hx-confirm="Delete distro {{ d.name }}?"
+                            hx-target="closest tr"
+                            hx-swap="outerHTML">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No named distros.</div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Add Named Host</h3>
+    <form hx-post="/web/named/hosts" hx-target="#named-host-list" hx-swap="innerHTML">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="host_name">Name</label>
+                <input type="text" id="host_name" name="name" required placeholder="web-server-01">
+            </div>
+            <div class="form-group">
+                <label for="host_mac">MAC Address</label>
+                <input type="text" id="host_mac" name="mac" required placeholder="aa:bb:cc:dd:ee:ff">
+            </div>
+            <div class="form-group">
+                <label for="host_profile">Profile</label>
+                <input type="text" id="host_profile" name="profile" placeholder="fedora42-server">
+            </div>
+            <div class="form-group">
+                <label for="host_distro">Distro</label>
+                <input type="text" id="host_distro" name="distro" placeholder="fedora42">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="host_hostname">Hostname</label>
+                <input type="text" id="host_hostname" name="hostname" placeholder="web-server-01.example.com">
+            </div>
+            <div class="form-group">
+                <label for="host_ip_address">IP Address</label>
+                <input type="text" id="host_ip_address" name="ip_address" placeholder="192.168.1.100">
+            </div>
+            <div class="form-group">
+                <label for="host_netmask">Netmask</label>
+                <input type="text" id="host_netmask" name="netmask" placeholder="255.255.255.0">
+            </div>
+            <div class="form-group">
+                <label for="host_gateway">Gateway</label>
+                <input type="text" id="host_gateway" name="gateway" placeholder="192.168.1.1">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="host_nameservers">Nameservers (comma-separated)</label>
+                <input type="text" id="host_nameservers" name="nameservers" placeholder="8.8.8.8, 8.8.4.4">
+            </div>
+            <div class="form-group">
+                <label for="host_comment">Comment</label>
+                <input type="text" id="host_comment" name="comment" placeholder="Optional description">
+            </div>
+        </div>
+        <div class="actions">
+            <button type="submit" class="btn btn-primary">Add Host</button>
+            <span class="htmx-indicator"><span class="spinner"></span></span>
+        </div>
+    </form>
+</div>
+
+<div class="card" id="named-host-list">
+    <h3>Named Hosts</h3>
+    {% if hosts %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>MAC</th>
+                <th>Profile</th>
+                <th>Distro</th>
+                <th>Hostname</th>
+                <th>IP</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for h in hosts %}
+            <tr>
+                <td>{{ h.name }}</td>
+                <td><code>{{ h.mac }}</code></td>
+                <td>{{ h.profile or "-" }}</td>
+                <td>{{ h.distro or "-" }}</td>
+                <td>{{ h.hostname or "-" }}</td>
+                <td>{{ h.ip_address or "-" }}</td>
+                <td>
+                    <button class="btn btn-danger btn-sm"
+                            hx-delete="/web/named/hosts/{{ h.name }}"
+                            hx-confirm="Delete host {{ h.name }}?"
+                            hx-target="closest tr"
+                            hx-swap="outerHTML">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No named hosts.</div>
+    {% endif %}
+</div>
+{% endblock %}

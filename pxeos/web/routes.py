@@ -49,6 +49,92 @@ def _plugin_names() -> List[str]:
     return reg.available if reg else []
 
 
+def _list_provisions() -> List[Dict[str, Any]]:
+    engine = _get_engine()
+    if not engine:
+        return []
+    return [r.to_dict() for r in engine.tracker.list_all()]
+
+
+def _list_power_hosts() -> List[Dict[str, Any]]:
+    config = _get_config()
+    if not config:
+        return []
+    from pxeos.config import load_hosts as _load_hosts
+    hosts_file = config.data_dir / "hosts.toml"
+    if not hosts_file.exists():
+        return []
+    rules = _load_hosts(hosts_file)
+    return [
+        {
+            "mac": r.mac,
+            "profile": r.profile,
+            "os_family": r.os_family,
+            "bmc_host": r.bmc_host,
+            "bmc_driver": r.bmc_driver,
+        }
+        for r in rules
+        if r.mac and r.bmc_host and r.bmc_driver
+    ]
+
+
+def _web_named_store():
+    from pxeos.named_objects import NamedObjectStore
+    config = _get_config()
+    if not config:
+        return None
+    return NamedObjectStore(config.data_dir / "named")
+
+
+def _list_named_distros() -> List[Dict[str, Any]]:
+    from dataclasses import asdict
+    store = _web_named_store()
+    if not store:
+        return []
+    return [asdict(d) for d in store.list_distros()]
+
+
+def _list_named_hosts() -> List[Dict[str, Any]]:
+    from dataclasses import asdict
+    store = _web_named_store()
+    if not store:
+        return []
+    return [asdict(h) for h in store.list_hosts()]
+
+
+def _list_api_keys() -> List[Dict[str, Any]]:
+    from pxeos.auth import get_key_store
+    store = get_key_store()
+    if not store:
+        return []
+    return [
+        {
+            "name": k.name,
+            "role": k.role.value,
+            "enabled": k.enabled,
+            "created_at": k.created_at,
+            "last_used_at": k.last_used_at,
+        }
+        for k in store.list_keys()
+    ]
+
+
+def _web_repo_manager():
+    from pxeos.repo_mirror import RepoManager
+    config = _get_config()
+    if not config:
+        return None
+    return RepoManager(config.data_dir)
+
+
+def _list_mirrors() -> List[Dict[str, Any]]:
+    from dataclasses import asdict
+    mgr = _web_repo_manager()
+    if not mgr:
+        return []
+    return [asdict(m) for m in mgr.list_mirrors()]
+
+
 def _list_distros() -> List[Dict[str, str]]:
     config = _get_config()
     if not config or not config.distro_root.exists():
@@ -575,3 +661,380 @@ def web_import_fetch(
         return HTMLResponse(
             f'<div class="card"><div class="flash flash-error">Fetch failed: {exc}</div></div>'
         )
+
+
+# ------- Provisioning Status -------
+
+
+@router.get("/provisions", response_class=HTMLResponse)
+def provisions_page():
+    return _render(
+        "provisions.html",
+        page="provisions",
+        provisions=_list_provisions(),
+    )
+
+
+@router.get("/provisions/table", response_class=HTMLResponse)
+def provisions_table():
+    provisions = _list_provisions()
+    tmpl = _templates.get_template("provisions_table.html")
+    html = tmpl.render(provisions=provisions)
+    return HTMLResponse(html)
+
+
+@router.post("/provisions/{mac}/complete", response_class=HTMLResponse)
+def web_mark_complete(mac: str):
+    engine = _get_engine()
+    if not engine:
+        return HTMLResponse("engine not initialized", status_code=503)
+    from pxeos.state import ProvisionState
+    try:
+        engine.tracker.transition(mac, ProvisionState.COMPLETE)
+    except ValueError:
+        pass
+    provisions = _list_provisions()
+    tmpl = _templates.get_template("provisions_table.html")
+    return HTMLResponse(tmpl.render(provisions=provisions))
+
+
+@router.post("/provisions/{mac}/failed", response_class=HTMLResponse)
+def web_mark_failed(mac: str, error: str = Form("manual failure")):
+    engine = _get_engine()
+    if not engine:
+        return HTMLResponse("engine not initialized", status_code=503)
+    from pxeos.state import ProvisionState
+    try:
+        engine.tracker.transition(mac, ProvisionState.FAILED, error_message=error)
+    except ValueError:
+        pass
+    provisions = _list_provisions()
+    tmpl = _templates.get_template("provisions_table.html")
+    return HTMLResponse(tmpl.render(provisions=provisions))
+
+
+@router.post("/provisions/{mac}/disable-netboot", response_class=HTMLResponse)
+def web_disable_netboot(mac: str):
+    engine = _get_engine()
+    if not engine:
+        return HTMLResponse("engine not initialized", status_code=503)
+    try:
+        engine.tracker.disable_netboot(mac)
+    except ValueError:
+        pass
+    provisions = _list_provisions()
+    tmpl = _templates.get_template("provisions_table.html")
+    return HTMLResponse(tmpl.render(provisions=provisions))
+
+
+@router.post("/provisions/{mac}/enable-netboot", response_class=HTMLResponse)
+def web_enable_netboot(mac: str):
+    engine = _get_engine()
+    if not engine:
+        return HTMLResponse("engine not initialized", status_code=503)
+    try:
+        engine.tracker.enable_netboot(mac)
+    except ValueError:
+        pass
+    provisions = _list_provisions()
+    tmpl = _templates.get_template("provisions_table.html")
+    return HTMLResponse(tmpl.render(provisions=provisions))
+
+
+# ------- Power Management -------
+
+
+@router.get("/power", response_class=HTMLResponse)
+def power_page():
+    return _render(
+        "power.html",
+        page="power",
+        hosts=_list_power_hosts(),
+    )
+
+
+@router.post("/power/{mac}/on", response_class=HTMLResponse)
+def web_power_on(mac: str):
+    from pxeos.power import PowerError
+    try:
+        from pxeos.api import _get_power_manager
+        mgr = _get_power_manager()
+        result = mgr.power_on(mac)
+        flash: Optional[Dict[str, str]] = {"type": "success", "message": f"Power on {mac}: {result}"}
+    except (PowerError, Exception) as exc:
+        flash = {"type": "error", "message": f"Power on failed: {exc}"}
+    return _render(
+        "power.html",
+        page="power",
+        hosts=_list_power_hosts(),
+        flash=flash,
+    )
+
+
+@router.post("/power/{mac}/off", response_class=HTMLResponse)
+def web_power_off(mac: str):
+    from pxeos.power import PowerError
+    try:
+        from pxeos.api import _get_power_manager
+        mgr = _get_power_manager()
+        result = mgr.power_off(mac)
+        flash: Optional[Dict[str, str]] = {"type": "success", "message": f"Power off {mac}: {result}"}
+    except (PowerError, Exception) as exc:
+        flash = {"type": "error", "message": f"Power off failed: {exc}"}
+    return _render(
+        "power.html",
+        page="power",
+        hosts=_list_power_hosts(),
+        flash=flash,
+    )
+
+
+@router.get("/power/{mac}/status", response_class=HTMLResponse)
+def web_power_status(mac: str):
+    from pxeos.power import PowerError
+    try:
+        from pxeos.api import _get_power_manager
+        mgr = _get_power_manager()
+        status = mgr.power_status(mac)
+        color = "success" if status == "on" else "muted" if status == "off" else "warning"
+        return HTMLResponse(f'<span class="badge" style="color: var(--{color})">{status}</span>')
+    except (PowerError, Exception):
+        return HTMLResponse('<span class="badge" style="color: var(--danger)">error</span>')
+
+
+# ------- Named Objects -------
+
+
+@router.get("/named", response_class=HTMLResponse)
+def named_page():
+    return _render(
+        "named.html",
+        page="named",
+        distros=_list_named_distros(),
+        hosts=_list_named_hosts(),
+        plugins=_plugin_names(),
+    )
+
+
+@router.post("/named/distros", response_class=HTMLResponse)
+def web_create_named_distro(
+    name: str = Form(...),
+    os_family: str = Form(...),
+    vendor: str = Form(...),
+    version: str = Form(...),
+    arch: str = Form("x86_64"),
+    kernel_path: str = Form(""),
+    initrd_path: str = Form(""),
+    install_url: str = Form(""),
+    comment: str = Form(""),
+):
+    from pxeos.named_objects import NamedDistro
+    store = _web_named_store()
+    if not store:
+        return _render(
+            "named.html", page="named", distros=[], hosts=[],
+            plugins=_plugin_names(),
+            flash={"type": "error", "message": "Server not initialized"},
+        )
+    distro = NamedDistro(
+        name=name, os_family=os_family, vendor=vendor, version=version,
+        arch=arch, kernel_path=kernel_path, initrd_path=initrd_path,
+        install_url=install_url, comment=comment,
+    )
+    try:
+        store.add_distro(distro)
+        flash: Optional[Dict[str, str]] = {"type": "success", "message": f"Named distro '{name}' created"}
+    except ValueError as exc:
+        flash = {"type": "error", "message": str(exc)}
+    return _render(
+        "named.html", page="named",
+        distros=_list_named_distros(), hosts=_list_named_hosts(),
+        plugins=_plugin_names(), flash=flash,
+    )
+
+
+@router.delete("/named/distros/{name}", response_class=HTMLResponse)
+def web_delete_named_distro(name: str):
+    store = _web_named_store()
+    if store:
+        try:
+            store.delete_distro(name)
+        except ValueError:
+            pass
+    return HTMLResponse("")
+
+
+@router.post("/named/hosts", response_class=HTMLResponse)
+def web_create_named_host(
+    name: str = Form(...),
+    mac: str = Form(...),
+    profile: str = Form(""),
+    distro: str = Form(""),
+    hostname: str = Form(""),
+    gateway: str = Form(""),
+    nameservers: str = Form(""),
+    ip_address: str = Form(""),
+    netmask: str = Form(""),
+    comment: str = Form(""),
+):
+    from pxeos.named_objects import NamedHost
+    store = _web_named_store()
+    if not store:
+        return _render(
+            "named.html", page="named", distros=[], hosts=[],
+            plugins=_plugin_names(),
+            flash={"type": "error", "message": "Server not initialized"},
+        )
+    ns_list = [ns.strip() for ns in nameservers.split(",") if ns.strip()]
+    host = NamedHost(
+        name=name, mac=mac, profile=profile, distro=distro,
+        hostname=hostname, gateway=gateway, nameservers=ns_list,
+        ip_address=ip_address, netmask=netmask, comment=comment,
+    )
+    try:
+        store.add_host(host)
+        flash: Optional[Dict[str, str]] = {"type": "success", "message": f"Named host '{name}' created"}
+    except ValueError as exc:
+        flash = {"type": "error", "message": str(exc)}
+    return _render(
+        "named.html", page="named",
+        distros=_list_named_distros(), hosts=_list_named_hosts(),
+        plugins=_plugin_names(), flash=flash,
+    )
+
+
+@router.delete("/named/hosts/{name}", response_class=HTMLResponse)
+def web_delete_named_host(name: str):
+    store = _web_named_store()
+    if store:
+        try:
+            store.delete_host(name)
+        except ValueError:
+            pass
+    return HTMLResponse("")
+
+
+# ------- API Keys -------
+
+
+@router.get("/keys", response_class=HTMLResponse)
+def keys_page():
+    from pxeos.auth import is_auth_enabled
+    return _render(
+        "keys.html",
+        page="keys",
+        keys=_list_api_keys(),
+        auth_enabled=is_auth_enabled(),
+    )
+
+
+@router.post("/keys", response_class=HTMLResponse)
+def web_create_key(
+    name: str = Form(...),
+    role: str = Form("viewer"),
+):
+    from pxeos.auth import Role, get_key_store, is_auth_enabled
+    store = get_key_store()
+    if not store:
+        return _render(
+            "keys.html", page="keys", keys=[], auth_enabled=False,
+            flash={"type": "error", "message": "Auth not initialized"},
+        )
+    try:
+        role_enum = Role(role)
+    except ValueError:
+        return _render(
+            "keys.html", page="keys", keys=_list_api_keys(),
+            auth_enabled=is_auth_enabled(),
+            flash={"type": "error", "message": f"Invalid role: {role}"},
+        )
+    raw_key, api_key = store.create_key(name, role_enum)
+    return _render(
+        "keys.html", page="keys", keys=_list_api_keys(),
+        auth_enabled=is_auth_enabled(),
+        flash={"type": "success", "message": f"Key '{name}' created"},
+        raw_key=raw_key,
+    )
+
+
+@router.delete("/keys/{name}", response_class=HTMLResponse)
+def web_delete_key(name: str):
+    from pxeos.auth import get_key_store
+    store = get_key_store()
+    if store:
+        store.delete(name)
+    return HTMLResponse("")
+
+
+# ------- Mirrors -------
+
+
+@router.get("/mirrors", response_class=HTMLResponse)
+def mirrors_page():
+    return _render(
+        "mirrors.html",
+        page="mirrors",
+        mirrors=_list_mirrors(),
+    )
+
+
+@router.post("/mirrors", response_class=HTMLResponse)
+def web_add_mirror(
+    name: str = Form(...),
+    source_url: str = Form(...),
+    local_path: str = Form(""),
+    sync_interval: int = Form(86400),
+):
+    from pxeos.repo_mirror import RepoMirror
+    mgr = _web_repo_manager()
+    if not mgr:
+        return _render(
+            "mirrors.html", page="mirrors", mirrors=[],
+            flash={"type": "error", "message": "Server not initialized"},
+        )
+    mirror = RepoMirror(
+        name=name, source_url=source_url,
+        local_path=local_path, sync_interval=sync_interval,
+    )
+    try:
+        mgr.add_mirror(mirror)
+        flash: Optional[Dict[str, str]] = {"type": "success", "message": f"Mirror '{name}' added"}
+    except ValueError as exc:
+        flash = {"type": "error", "message": str(exc)}
+    return _render(
+        "mirrors.html", page="mirrors",
+        mirrors=_list_mirrors(), flash=flash,
+    )
+
+
+@router.post("/mirrors/{name}/sync", response_class=HTMLResponse)
+def web_sync_mirror(name: str):
+    mgr = _web_repo_manager()
+    if not mgr:
+        return _render(
+            "mirrors.html", page="mirrors", mirrors=[],
+            flash={"type": "error", "message": "Server not initialized"},
+        )
+    try:
+        result = mgr.sync_mirror(name)
+        if result.success:
+            flash: Optional[Dict[str, str]] = {"type": "success", "message": f"Mirror '{name}' synced"}
+        else:
+            flash = {"type": "error", "message": f"Sync failed: {result.error}"}
+    except ValueError as exc:
+        flash = {"type": "error", "message": str(exc)}
+    return _render(
+        "mirrors.html", page="mirrors",
+        mirrors=_list_mirrors(), flash=flash,
+    )
+
+
+@router.delete("/mirrors/{name}", response_class=HTMLResponse)
+def web_delete_mirror(name: str):
+    mgr = _web_repo_manager()
+    if mgr:
+        try:
+            mgr.remove_mirror(name)
+        except ValueError:
+            pass
+    return HTMLResponse("")

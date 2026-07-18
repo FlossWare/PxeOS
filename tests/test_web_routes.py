@@ -78,7 +78,9 @@ class TestDashboard(WebTestBase):
     def test_dashboard_sidebar_nav_links(self):
         resp = self.client.get("/web/")
         for link in ["/web/distros", "/web/profiles", "/web/hosts",
-                     "/web/cloud-init", "/web/import"]:
+                     "/web/cloud-init", "/web/import",
+                     "/web/provisions", "/web/power", "/web/named",
+                     "/web/keys", "/web/mirrors"]:
             self.assertIn(link, resp.text)
 
 
@@ -260,6 +262,125 @@ class TestImportPage(WebTestBase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Fetch failed", resp.text)
+
+
+class TestProvisionsPage(WebTestBase):
+
+    def test_provisions_page_returns_200(self):
+        self.config.data_dir.__truediv__.return_value.exists.return_value = False
+        resp = self.client.get("/web/provisions")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_provisions_page_contains_heading(self):
+        resp = self.client.get("/web/provisions")
+        self.assertIn("Provisioning Status", resp.text)
+
+    def test_provisions_page_shows_empty_state(self):
+        from pxeos.api import _engine
+        _engine.tracker.list_all.return_value = []
+        resp = self.client.get("/web/provisions")
+        self.assertIn("No active provisions", resp.text)
+
+    def test_provisions_table_endpoint(self):
+        from pxeos.api import _engine
+        _engine.tracker.list_all.return_value = []
+        resp = self.client.get("/web/provisions/table")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_provisions_page_has_stats(self):
+        resp = self.client.get("/web/provisions")
+        self.assertIn("Total", resp.text)
+        self.assertIn("Complete", resp.text)
+        self.assertIn("Failed", resp.text)
+
+
+class TestPowerPage(WebTestBase):
+
+    def test_power_page_returns_200(self):
+        self.config.data_dir.__truediv__.return_value.exists.return_value = False
+        resp = self.client.get("/web/power")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_power_page_contains_heading(self):
+        resp = self.client.get("/web/power")
+        self.assertIn("Power Management", resp.text)
+
+    def test_power_page_shows_empty_state(self):
+        self.config.data_dir.__truediv__.return_value.exists.return_value = False
+        resp = self.client.get("/web/power")
+        self.assertIn("No hosts with BMC power management", resp.text)
+
+
+class TestNamedPage(WebTestBase):
+
+    def test_named_page_returns_200(self):
+        resp = self.client.get("/web/named")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_named_page_contains_heading(self):
+        resp = self.client.get("/web/named")
+        self.assertIn("Named Objects", resp.text)
+
+    def test_named_page_has_distro_form(self):
+        resp = self.client.get("/web/named")
+        self.assertIn("Add Named Distro", resp.text)
+
+    def test_named_page_has_host_form(self):
+        resp = self.client.get("/web/named")
+        self.assertIn("Add Named Host", resp.text)
+
+    def test_named_page_has_plugin_options(self):
+        resp = self.client.get("/web/named")
+        self.assertIn("fedora", resp.text)
+
+
+class TestKeysPage(WebTestBase):
+
+    def test_keys_page_returns_200(self):
+        resp = self.client.get("/web/keys")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_keys_page_contains_heading(self):
+        resp = self.client.get("/web/keys")
+        self.assertIn("API Keys", resp.text)
+
+    def test_keys_page_has_create_form(self):
+        resp = self.client.get("/web/keys")
+        self.assertIn("Create API Key", resp.text)
+
+    def test_keys_page_has_role_select(self):
+        resp = self.client.get("/web/keys")
+        self.assertIn("viewer", resp.text)
+        self.assertIn("operator", resp.text)
+        self.assertIn("admin", resp.text)
+
+
+class TestMirrorsPage(WebTestBase):
+
+    def test_mirrors_page_returns_200(self):
+        resp = self.client.get("/web/mirrors")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_mirrors_page_contains_heading(self):
+        resp = self.client.get("/web/mirrors")
+        self.assertIn("Repository Mirrors", resp.text)
+
+    def test_mirrors_page_has_create_form(self):
+        resp = self.client.get("/web/mirrors")
+        self.assertIn("Add Mirror", resp.text)
+
+    def test_mirrors_page_shows_empty_state(self):
+        resp = self.client.get("/web/mirrors")
+        self.assertIn("No mirrors configured", resp.text)
+
+
+class TestDashboardNavLinks(WebTestBase):
+
+    def test_dashboard_sidebar_has_new_links(self):
+        resp = self.client.get("/web/")
+        for link in ["/web/provisions", "/web/power", "/web/named",
+                     "/web/keys", "/web/mirrors"]:
+            self.assertIn(link, resp.text)
 
 
 class TestDeleteDistro(WebTestBase):

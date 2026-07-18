@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}PxeOS - Power Management{% endblock %}
+{% block content %}
+<h2>Power Management</h2>
+
+{% if flash %}
+<div class="flash flash-{{ flash.type }}">{{ flash.message }}</div>
+{% endif %}
+
+<div class="card">
+    <h3>BMC-Managed Hosts</h3>
+    {% if hosts %}
+    <table>
+        <thead>
+            <tr>
+                <th>MAC</th>
+                <th>Profile</th>
+                <th>BMC Host</th>
+                <th>Driver</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for h in hosts %}
+            <tr>
+                <td><code>{{ h.mac }}</code></td>
+                <td>{{ h.profile }}</td>
+                <td><code>{{ h.bmc_host }}</code></td>
+                <td>{{ h.bmc_driver }}</td>
+                <td id="power-status-{{ loop.index }}">
+                    <button class="btn btn-sm" style="background: var(--surface); border: 1px solid var(--border); color: var(--text);"
+                            hx-get="/web/power/{{ h.mac }}/status"
+                            hx-target="#power-status-{{ loop.index }}"
+                            hx-swap="innerHTML">Check</button>
+                </td>
+                <td>
+                    <button class="btn btn-primary btn-sm"
+                            hx-post="/web/power/{{ h.mac }}/on"
+                            hx-confirm="Power ON {{ h.mac }}?"
+                            hx-target="body">Power On</button>
+                    <button class="btn btn-danger btn-sm"
+                            hx-post="/web/power/{{ h.mac }}/off"
+                            hx-confirm="Power OFF {{ h.mac }}?"
+                            hx-target="body">Power Off</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No hosts with BMC power management configured. Add bmc_host and bmc_driver to host rules.</div>
+    {% endif %}
+</div>
+{% endblock %}

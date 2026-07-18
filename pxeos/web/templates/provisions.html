@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}PxeOS - Provisioning Status{% endblock %}
+{% block content %}
+<h2>Provisioning Status</h2>
+
+{% if flash %}
+<div class="flash flash-{{ flash.type }}">{{ flash.message }}</div>
+{% endif %}
+
+<div class="stats">
+    <div class="stat">
+        <div class="value">{{ provisions|length }}</div>
+        <div class="label">Total</div>
+    </div>
+    <div class="stat">
+        <div class="value">{{ provisions|selectattr("state","equalto","booting")|list|length + provisions|selectattr("state","equalto","installing")|list|length }}</div>
+        <div class="label">In Progress</div>
+    </div>
+    <div class="stat">
+        <div class="value">{{ provisions|selectattr("state","equalto","complete")|list|length }}</div>
+        <div class="label">Complete</div>
+    </div>
+    <div class="stat">
+        <div class="value">{{ provisions|selectattr("state","equalto","failed")|list|length }}</div>
+        <div class="label">Failed</div>
+    </div>
+</div>
+
+<div class="card" id="provision-table"
+     hx-get="/web/provisions/table"
+     hx-trigger="every 5s"
+     hx-swap="innerHTML">
+    {% include "provisions_table.html" %}
+</div>
+{% endblock %}

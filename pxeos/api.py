@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import (
     BaseHTTPMiddleware,
@@ -236,6 +237,13 @@ def init_app(
 
     from pxeos.web.routes import router as web_router
     app.include_router(web_router)
+
+    if config.distro_root.exists():
+        app.mount(
+            "/distros",
+            StaticFiles(directory=str(config.distro_root)),
+            name="distros",
+        )
 
     return app
 

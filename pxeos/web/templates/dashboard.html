@@ -36,9 +36,9 @@
             <tr>
                 <td>{{ plugin }}</td>
                 <td>
-                    {% if plugin in ["fedora", "debian", "ubuntu", "suse", "arch"] %}
+                    {% if plugin in ["fedora", "debian", "ubuntu", "suse", "arch", "tinycore"] %}
                     <span class="badge badge-linux">Linux</span>
-                    {% elif plugin in ["freebsd", "openbsd", "netbsd"] %}
+                    {% elif plugin in ["freebsd", "openbsd", "netbsd", "dragonflybsd"] %}
                     <span class="badge badge-bsd">BSD</span>
                     {% elif plugin == "windows" %}
                     <span class="badge badge-windows">Windows</span>

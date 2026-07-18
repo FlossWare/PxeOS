@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}PxeOS - API Keys{% endblock %}
+{% block content %}
+<h2>API Keys</h2>
+
+{% if not auth_enabled %}
+<div class="flash flash-error">Authentication is disabled. Keys can be managed but are not enforced until auth is enabled in the server config.</div>
+{% endif %}
+
+{% if flash %}
+<div class="flash flash-{{ flash.type }}">{{ flash.message }}</div>
+{% endif %}
+
+{% if raw_key %}
+<div class="card" style="border-color: var(--warning);">
+    <h3>New API Key (copy now — shown only once)</h3>
+    <pre style="word-break: break-all;">{{ raw_key }}</pre>
+</div>
+{% endif %}
+
+<div class="card">
+    <h3>Create API Key</h3>
+    <form hx-post="/web/keys" hx-target="body">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="key_name">Key Name</label>
+                <input type="text" id="key_name" name="name" required placeholder="my-service-key">
+            </div>
+            <div class="form-group">
+                <label for="key_role">Role</label>
+                <select id="key_role" name="role">
+                    <option value="viewer">Viewer</option>
+                    <option value="operator">Operator</option>
+                    <option value="admin">Admin</option>
+                </select>
+            </div>
+        </div>
+        <div class="actions">
+            <button type="submit" class="btn btn-primary">Create Key</button>
+            <span class="htmx-indicator"><span class="spinner"></span></span>
+        </div>
+    </form>
+</div>
+
+<div class="card" id="key-list">
+    <h3>Existing Keys</h3>
+    {% if keys %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Role</th>
+                <th>Enabled</th>
+                <th>Created</th>
+                <th>Last Used</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for k in keys %}
+            <tr>
+                <td>{{ k.name }}</td>
+                <td><span class="badge badge-{{ k.role }}">{{ k.role }}</span></td>
+                <td>{{ "Yes" if k.enabled else "No" }}</td>
+                <td>{{ k.created_at }}</td>
+                <td>{{ k.last_used_at or "-" }}</td>
+                <td>
+                    <button class="btn btn-danger btn-sm"
+                            hx-delete="/web/keys/{{ k.name }}"
+                            hx-confirm="Delete API key {{ k.name }}?"
+                            hx-target="closest tr"
+                            hx-swap="outerHTML">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No API keys configured.</div>
+    {% endif %}
+</div>
+{% endblock %}

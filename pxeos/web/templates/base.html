@@ -124,6 +124,12 @@
         .badge-linux { background: rgba(79,143,247,0.15); color: var(--accent); }
         .badge-bsd { background: rgba(52,211,153,0.15); color: var(--success); }
         .badge-windows { background: rgba(251,191,36,0.15); color: var(--warning); }
+        .badge-registered { background: rgba(139,143,163,0.15); color: var(--muted); }
+        .badge-booting { background: rgba(251,191,36,0.15); color: var(--warning); }
+        .badge-installing { background: rgba(79,143,247,0.15); color: var(--accent); }
+        .badge-post_install { background: rgba(79,143,247,0.15); color: var(--accent); }
+        .badge-complete { background: rgba(52,211,153,0.15); color: var(--success); }
+        .badge-failed { background: rgba(248,113,113,0.15); color: var(--danger); }
 
         form { display: flex; flex-direction: column; gap: 0.75rem; }
         label { font-size: 0.85rem; color: var(--muted); }
@@ -225,6 +231,12 @@
                 <a href="/web/hosts" {% if page == "hosts" %}class="active"{% endif %}>Host Rules</a>
                 <a href="/web/cloud-init" {% if page == "cloud-init" %}class="active"{% endif %}>Cloud-Init</a>
                 <a href="/web/import" {% if page == "import" %}class="active"{% endif %}>Import</a>
+                <a href="/web/provisions" {% if page == "provisions" %}class="active"{% endif %}>Provisions</a>
+                <a href="/web/power" {% if page == "power" %}class="active"{% endif %}>Power</a>
+                <a href="/web/named" {% if page == "named" %}class="active"{% endif %}>Named Objects</a>
+                <hr style="border-color: var(--border); margin: 0.5rem 1.25rem;">
+                <a href="/web/keys" {% if page == "keys" %}class="active"{% endif %}>API Keys</a>
+                <a href="/web/mirrors" {% if page == "mirrors" %}class="active"{% endif %}>Mirrors</a>
             </nav>
         </aside>
         <main class="main">

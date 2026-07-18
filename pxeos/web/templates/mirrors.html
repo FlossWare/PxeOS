@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}PxeOS - Mirrors{% endblock %}
+{% block content %}
+<h2>Repository Mirrors</h2>
+
+{% if flash %}
+<div class="flash flash-{{ flash.type }}">{{ flash.message }}</div>
+{% endif %}
+
+<div class="card">
+    <h3>Add Mirror</h3>
+    <form hx-post="/web/mirrors" hx-target="#mirror-list" hx-swap="innerHTML">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="mirror_name">Name</label>
+                <input type="text" id="mirror_name" name="name" required placeholder="fedora-42-repo">
+            </div>
+            <div class="form-group">
+                <label for="mirror_source_url">Source URL</label>
+                <input type="url" id="mirror_source_url" name="source_url" required placeholder="https://mirror.example.com/fedora/42/os/">
+            </div>
+            <div class="form-group">
+                <label for="mirror_local_path">Local Path (optional)</label>
+                <input type="text" id="mirror_local_path" name="local_path" placeholder="auto-assigned if blank">
+            </div>
+            <div class="form-group">
+                <label for="mirror_sync_interval">Sync Interval (seconds)</label>
+                <input type="number" id="mirror_sync_interval" name="sync_interval" value="86400">
+            </div>
+        </div>
+        <div class="actions">
+            <button type="submit" class="btn btn-primary">Add Mirror</button>
+            <span class="htmx-indicator"><span class="spinner"></span></span>
+        </div>
+    </form>
+</div>
+
+<div class="card" id="mirror-list">
+    <h3>Configured Mirrors</h3>
+    {% if mirrors %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Source URL</th>
+                <th>Local Path</th>
+                <th>Sync Interval</th>
+                <th>Last Sync</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in mirrors %}
+            <tr>
+                <td>{{ m.name }}</td>
+                <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;"><code>{{ m.source_url }}</code></td>
+                <td><code>{{ m.local_path }}</code></td>
+                <td>{{ m.sync_interval }}s</td>
+                <td>{{ m.last_sync or "never" }}</td>
+                <td>
+                    <button class="btn btn-primary btn-sm"
+                            hx-post="/web/mirrors/{{ m.name }}/sync"
+                            hx-confirm="Sync mirror {{ m.name }}? This may take a while."
+                            hx-target="body">Sync</button>
+                    <button class="btn btn-danger btn-sm"
+                            hx-delete="/web/mirrors/{{ m.name }}"
+                            hx-confirm="Delete mirror {{ m.name }}?"
+                            hx-target="closest tr"
+                            hx-swap="outerHTML">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No mirrors configured.</div>
+    {% endif %}
+</div>
+{% endblock %}
