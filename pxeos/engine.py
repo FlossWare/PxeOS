@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +19,45 @@ from pxeos.registry import PluginRegistry
 from pxeos.state import ProvisionState, ProvisionTracker
 
 logger = logging.getLogger("pxeos.engine")
+
+# Allowed variable names for #{variable} substitution in iPXE commands.
+# Only these names are expanded; unknown names are left as-is.
+_IPXE_ALLOWED_VARS = frozenset({
+    "mac", "hostname", "profile", "os_family", "os_version",
+    "arch", "vendor",
+})
+
+# Pattern that matches iPXE control flow and dangerous commands.
+_IPXE_UNSAFE_RE = re.compile(
+    r"^\s*(?:#!ipxe|chain\s|imgfetch\s|imgexec\s|exit\b|shell\b|sanboot\s)",
+    re.IGNORECASE,
+)
+
+
+def _substitute_ipxe_vars(line: str, variables: dict[str, str]) -> str:
+    """Replace ``#{name}`` placeholders with values from *variables*.
+
+    Only names in ``_IPXE_ALLOWED_VARS`` are substituted.  Unknown
+    placeholders are left verbatim so they cannot be used to inject
+    arbitrary content.
+    """
+    def _replace(m: re.Match) -> str:
+        name = m.group(1)
+        if name in _IPXE_ALLOWED_VARS and name in variables:
+            return variables[name]
+        return m.group(0)  # leave unknown placeholders as-is
+
+    return re.sub(r"#\{(\w+)\}", _replace, line)
+
+
+def _validate_ipxe_command(cmd: str) -> bool:
+    """Return True if *cmd* is safe to inject into an iPXE script.
+
+    Rejects commands that could redirect boot flow (``chain``,
+    ``imgfetch``, ``imgexec``, ``exit``, ``shell``, ``sanboot``)
+    or that try to override the shebang line.
+    """
+    return not bool(_IPXE_UNSAFE_RE.match(cmd))
 
 
 @ttl_cache(maxsize=64, ttl=300, name="profile_loader")
@@ -142,10 +182,43 @@ class ProvisioningEngine:
         lines = [
             "#!ipxe",
             "",
-            f"kernel {assets.kernel}",
         ]
+
+        # Inject DHCP options as iPXE ``set`` commands
+        for opt_name, opt_value in profile.dhcp_options.items():
+            lines.append(f"set {opt_name} {opt_value}")
+        if profile.dhcp_options:
+            lines.append("")
+
+        lines.append(f"kernel {assets.kernel}")
         if assets.initrd:
             lines.append(f"initrd {assets.initrd}")
+
+        # Inject custom iPXE commands before boot, with
+        # variable substitution.
+        if profile.ipxe_commands:
+            hostname = profile.network.get(
+                "hostname", profile.name
+            )
+            subst_vars = {
+                "mac": mac,
+                "hostname": hostname,
+                "profile": profile.name,
+                "os_family": profile.os_family,
+                "os_version": profile.os_version,
+                "arch": profile.arch,
+                "vendor": profile.vendor,
+            }
+            for cmd in profile.ipxe_commands:
+                if not _validate_ipxe_command(cmd):
+                    logger.warning(
+                        "Skipping unsafe iPXE command: %s",
+                        cmd,
+                    )
+                    continue
+                lines.append(
+                    _substitute_ipxe_vars(cmd, subst_vars)
+                )
 
         args = list(assets.boot_args)
         if not is_live:

@@ -28,6 +28,8 @@ class ProvisionProfile:
     packages: list[str] = field(default_factory=list)
     post_scripts: list[str] = field(default_factory=list)
     extra: dict = field(default_factory=dict)
+    ipxe_commands: list[str] = field(default_factory=list)
+    dhcp_options: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

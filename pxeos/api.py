@@ -1561,3 +1561,113 @@ def delete_api_key(name: str) -> Dict[str, str]:
             404, f"API key {name!r} not found"
         )
     return {"name": name, "status": "deleted"}
+
+
+# ---------------------------------------------------------------
+# Repository mirror endpoints (issue #42)
+# ---------------------------------------------------------------
+
+
+class MirrorRequest(BaseModel):
+    name: str
+    source_url: str
+    local_path: str = ""
+    sync_interval: int = 86400
+
+
+class MirrorResponse(BaseModel):
+    name: str
+    source_url: str
+    local_path: str
+    sync_interval: int = 86400
+    last_sync: Optional[float] = None
+
+
+class MirrorSyncResponse(BaseModel):
+    mirror_name: str
+    success: bool
+    started_at: float
+    finished_at: float
+    error: str = ""
+
+
+def _get_repo_manager():
+    """Return a RepoManager using the configured data_dir."""
+    from pxeos.repo_mirror import RepoManager
+
+    if _config is None:
+        raise HTTPException(503, "config not initialized")
+    return RepoManager(_config.data_dir)
+
+
+@app.get(
+    "/api/v1/mirrors",
+    response_model=List[MirrorResponse],
+    dependencies=[Depends(require_role(Role.VIEWER))],
+)
+def list_mirrors() -> List[Dict[str, Any]]:
+    """List all configured repository mirrors."""
+    from dataclasses import asdict
+
+    manager = _get_repo_manager()
+    return [asdict(m) for m in manager.list_mirrors()]
+
+
+@app.post(
+    "/api/v1/mirrors",
+    response_model=MirrorResponse,
+    status_code=201,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def add_mirror(req: MirrorRequest) -> Dict[str, Any]:
+    """Add a new repository mirror."""
+    from dataclasses import asdict
+
+    from pxeos.repo_mirror import RepoMirror
+
+    manager = _get_repo_manager()
+    mirror = RepoMirror(
+        name=req.name,
+        source_url=req.source_url,
+        local_path=req.local_path,
+        sync_interval=req.sync_interval,
+    )
+    try:
+        result = manager.add_mirror(mirror)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return asdict(result)
+
+
+@app.post(
+    "/api/v1/mirrors/{name}/sync",
+    response_model=MirrorSyncResponse,
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
+def sync_mirror(name: str) -> Dict[str, Any]:
+    """Trigger a sync for a mirror."""
+    from dataclasses import asdict
+
+    manager = _get_repo_manager()
+    try:
+        result = manager.sync_mirror(name)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return asdict(result)
+
+
+@app.delete(
+    "/api/v1/mirrors/{name}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def delete_mirror(name: str) -> Dict[str, str]:
+    """Remove a repository mirror."""
+    manager = _get_repo_manager()
+    try:
+        if not manager.remove_mirror(name):
+            raise HTTPException(
+                404, f"mirror {name!r} not found"
+            )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"name": name, "status": "deleted"}
