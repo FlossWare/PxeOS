@@ -67,6 +67,7 @@ class FedoraPlugin(OSPlugin):
             "firewall": profile.extra.get("firewall", True),
             "reboot": profile.extra.get("reboot", True),
         }
+        self._sanitize_context(context)
         return self._render_template("kickstart.cfg.j2", context)
 
     def boot_assets(

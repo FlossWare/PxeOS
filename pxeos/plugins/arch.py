@@ -78,6 +78,7 @@ class ArchPlugin(OSPlugin):
             "services": profile.extra.get("services", []),
             "users": profile.extra.get("users", []),
         }
+        self._sanitize_context(context)
         return self._render_template(
             "archinstall.json.j2", context
         )

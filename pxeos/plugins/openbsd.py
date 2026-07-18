@@ -121,6 +121,7 @@ class OpenBSDPlugin(OSPlugin):
             "post_scripts": profile.post_scripts,
             "packages": profile.packages,
         }
+        self._sanitize_context(context)
         return self._render_template(
             "install.conf.j2", context
         )

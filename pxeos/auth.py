@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 import hashlib
+import hmac
 import json
 import os
 import secrets as stdlib_secrets
@@ -76,12 +77,18 @@ class ApiKeyStore:
     def validate(self, raw_key: str) -> Optional[ApiKey]:
         key_hash = self.hash_key(raw_key)
         keys = self._read()
-        api_key = keys.get(key_hash)
-        if api_key is None or not api_key.enabled:
+        # Use timing-safe comparison to prevent timing attacks.
+        # We iterate all stored hashes so the time is constant
+        # regardless of whether a match is found.
+        matched_key: Optional[ApiKey] = None
+        for stored_hash, api_key in keys.items():
+            if hmac.compare_digest(key_hash, stored_hash):
+                matched_key = api_key
+        if matched_key is None or not matched_key.enabled:
             return None
-        api_key.last_used_at = time.time()
+        matched_key.last_used_at = time.time()
         self._write(keys)
-        return api_key
+        return matched_key
 
     def list_keys(self) -> List[ApiKey]:
         return list(self._read().values())

@@ -71,6 +71,7 @@ class UbuntuPlugin(OSPlugin):
                 "autoinstall_version", 1
             ),
         }
+        self._sanitize_context(context)
         return self._render_template(
             "cloud-init.yaml.j2", context
         )
