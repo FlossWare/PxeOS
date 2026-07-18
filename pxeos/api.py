@@ -1067,6 +1067,136 @@ def delete_named_host(name: str) -> Dict[str, str]:
 # ---------------------------------------------------------------
 
 
+# ---------------------------------------------------------------
+# Power management endpoints (issue #29)
+# ---------------------------------------------------------------
+
+
+class PowerActionResponse(BaseModel):
+    mac: str
+    action: str
+    result: str
+
+
+class PowerStatusResponse(BaseModel):
+    mac: str
+    status: str
+
+
+_power_manager: Optional[Any] = None
+
+
+def _get_power_manager():
+    """Lazily build a PowerManager from host rules."""
+    global _power_manager
+    if _power_manager is not None:
+        return _power_manager
+
+    from pxeos.power import PowerManager
+
+    if _config is None:
+        raise HTTPException(503, "config not initialized")
+
+    manager = PowerManager()
+    hosts_path = _config.data_dir / "hosts.toml"
+    if hosts_path.exists():
+        rules = load_hosts(hosts_path)
+        for rule in rules:
+            if rule.mac and rule.bmc_host and rule.bmc_driver:
+                driver = PowerManager.create_driver(
+                    rule.bmc_driver,
+                    rule.bmc_host,
+                    rule.bmc_user or "",
+                    rule.bmc_password or "",
+                )
+                manager.register(rule.mac, driver)
+
+    _power_manager = manager
+    return manager
+
+
+@app.post(
+    "/api/v1/power/{mac}/on",
+    response_model=PowerActionResponse,
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
+def power_on(mac: str) -> Dict[str, Any]:
+    """Power on a host via its BMC."""
+    from pxeos.power import PowerError
+
+    manager = _get_power_manager()
+    try:
+        result = manager.power_on(mac)
+        return {"mac": mac, "action": "power_on", "result": result}
+    except PowerError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post(
+    "/api/v1/power/{mac}/off",
+    response_model=PowerActionResponse,
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
+def power_off(mac: str) -> Dict[str, Any]:
+    """Power off a host via its BMC."""
+    from pxeos.power import PowerError
+
+    manager = _get_power_manager()
+    try:
+        result = manager.power_off(mac)
+        return {"mac": mac, "action": "power_off", "result": result}
+    except PowerError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get(
+    "/api/v1/power/{mac}/status",
+    response_model=PowerStatusResponse,
+    dependencies=[Depends(require_role(Role.VIEWER))],
+)
+def get_power_status(mac: str) -> Dict[str, Any]:
+    """Get the power status of a host via its BMC."""
+    from pxeos.power import PowerError
+
+    manager = _get_power_manager()
+    try:
+        status = manager.power_status(mac)
+        return {"mac": mac, "status": status}
+    except PowerError as exc:
+        raise HTTPException(400, str(exc))
+
+
+# ---------------------------------------------------------------
+# Cache management endpoints (issue #31)
+# ---------------------------------------------------------------
+
+
+@app.get(
+    "/api/v1/cache/stats",
+    dependencies=[Depends(require_role(Role.VIEWER))],
+)
+def cache_stats() -> Dict[str, Any]:
+    """Return hit/miss statistics for all TTL caches."""
+    from pxeos.cache import get_all_cache_stats
+    return get_all_cache_stats()
+
+
+@app.post(
+    "/api/v1/cache/clear",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def cache_clear() -> Dict[str, Any]:
+    """Flush all caches."""
+    from pxeos.cache import clear_all_caches
+    count = clear_all_caches()
+    return {"cleared": count, "status": "ok"}
+
+
+# ---------------------------------------------------------------
+# API key management endpoints (admin only)
+# ---------------------------------------------------------------
+
+
 class ApiKeyCreateRequest(BaseModel):
     name: str
     role: str = "viewer"

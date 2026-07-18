@@ -61,3 +61,7 @@ class HostRule:
     serial: Optional[str] = None
     group: Optional[str] = None
     arch: Optional[str] = None
+    bmc_host: Optional[str] = None
+    bmc_user: Optional[str] = None
+    bmc_password: Optional[str] = None
+    bmc_driver: Optional[str] = None  # "ipmi" or "redfish"

@@ -57,6 +57,8 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_secret_parser(sub)
     _add_named_host_parser(sub)
     _add_auth_parser(sub)
+    _add_power_parser(sub)
+    _add_migrate_parser(sub)
 
     return parser
 
@@ -1311,6 +1313,141 @@ def _cmd_secret(
     return 1
 
 
+def _add_power_parser(
+    sub: argparse._SubParsersAction,
+) -> None:
+    power = sub.add_parser(
+        "power", help="BMC power management (IPMI/Redfish)"
+    )
+    power_sub = power.add_subparsers(dest="power_action")
+
+    p_on = power_sub.add_parser("on", help="power on host")
+    p_on.add_argument("mac", help="MAC address")
+
+    p_off = power_sub.add_parser("off", help="power off host")
+    p_off.add_argument("mac", help="MAC address")
+
+    p_status = power_sub.add_parser(
+        "status", help="query power status"
+    )
+    p_status.add_argument("mac", help="MAC address")
+
+    p_boot = power_sub.add_parser(
+        "set-boot-device", help="set next boot device"
+    )
+    p_boot.add_argument("mac", help="MAC address")
+    p_boot.add_argument(
+        "device", choices=["pxe", "disk"],
+        help="boot device (pxe or disk)",
+    )
+
+
+def _add_migrate_parser(
+    sub: argparse._SubParsersAction,
+) -> None:
+    migrate = sub.add_parser(
+        "migrate", help="migrate from other provisioning systems"
+    )
+    migrate_sub = migrate.add_subparsers(dest="migrate_action")
+
+    cobbler = migrate_sub.add_parser(
+        "from-cobbler", help="import Cobbler export data"
+    )
+    cobbler.add_argument(
+        "export_dir", type=Path,
+        help="path to Cobbler export directory",
+    )
+
+
+def _cmd_power(
+    args: argparse.Namespace,
+    config: PxeOSConfig,
+    matcher: HostMatcher,
+) -> int:
+    from pxeos.power import PowerError, PowerManager
+
+    # Build PowerManager from host rules
+    hosts_path = config.data_dir / "hosts.toml"
+    rules: List[HostRule] = []
+    if hosts_path.exists():
+        rules = load_hosts(hosts_path)
+
+    if not args.power_action:
+        print(
+            "usage: pxeos power {on|off|status|set-boot-device}"
+        )
+        return 1
+
+    manager = PowerManager()
+    for rule in rules:
+        if rule.mac and rule.bmc_host and rule.bmc_driver:
+            driver = PowerManager.create_driver(
+                rule.bmc_driver,
+                rule.bmc_host,
+                rule.bmc_user or "",
+                rule.bmc_password or "",
+            )
+            manager.register(rule.mac, driver)
+
+    mac = args.mac
+
+    try:
+        if args.power_action == "on":
+            result = manager.power_on(mac)
+            print(f"power on: {result}")
+            return 0
+        elif args.power_action == "off":
+            result = manager.power_off(mac)
+            print(f"power off: {result}")
+            return 0
+        elif args.power_action == "status":
+            status = manager.power_status(mac)
+            print(f"power status: {status}")
+            return 0
+        elif args.power_action == "set-boot-device":
+            result = manager.set_boot_device(mac, args.device)
+            print(f"boot device: {result}")
+            return 0
+    except PowerError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+def _cmd_migrate(
+    args: argparse.Namespace,
+    config: PxeOSConfig,
+    registry: PluginRegistry,
+) -> int:
+    if args.migrate_action == "from-cobbler":
+        from pxeos.cobbler_import import import_cobbler_data
+
+        report = import_cobbler_data(
+            args.export_dir, registry, config.data_dir,
+        )
+
+        print(f"distros imported:  {report.distros_imported}")
+        print(f"profiles imported: {report.profiles_imported}")
+        print(f"systems imported:  {report.systems_imported}")
+
+        if report.warnings:
+            print("\nwarnings:")
+            for w in report.warnings:
+                print(f"  - {w}")
+
+        if report.errors:
+            print("\nerrors:")
+            for e in report.errors:
+                print(f"  - {e}")
+            return 1
+
+        return 0
+
+    print("usage: pxeos migrate {from-cobbler}")
+    return 1
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = _build_parser()
 
@@ -1357,6 +1494,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _cmd_named_host(args, config)
     elif args.command == "auth":
         return _cmd_auth(args, config)
+    elif args.command == "power":
+        return _cmd_power(args, config, matcher)
+    elif args.command == "migrate":
+        return _cmd_migrate(args, config, registry)
 
     parser.print_help()
     return 1

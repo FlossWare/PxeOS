@@ -81,6 +81,10 @@ def load_hosts(path: Path) -> List[HostRule]:
                 serial=entry.get("serial"),
                 group=entry.get("group"),
                 arch=entry.get("arch"),
+                bmc_host=entry.get("bmc_host"),
+                bmc_user=entry.get("bmc_user"),
+                bmc_password=entry.get("bmc_password"),
+                bmc_driver=entry.get("bmc_driver"),
             )
         )
     return rules
