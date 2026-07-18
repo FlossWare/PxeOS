@@ -644,9 +644,20 @@ def register_cloud_init(
 )
 def get_cloud_init_user_data(instance_id: str) -> Response:
     entry = _cloud_init_store.get(instance_id)
-    if not entry:
-        raise HTTPException(404, f"instance {instance_id!r} not found")
-    return Response(content=entry["user_data"], media_type="text/yaml")
+    if entry:
+        return Response(content=entry["user_data"], media_type="text/yaml")
+    # Fall back to MAC-based resolution
+    if _engine is not None and validate_mac(instance_id):
+        mac = normalize_mac(instance_id)
+        try:
+            rule = _engine._resolve_rule(mac)
+            profile = _engine._load_profile_for_rule(rule)
+            from pxeos.cloud_init import generate_user_data
+            content = generate_user_data(profile)
+            return Response(content=content, media_type="text/yaml")
+        except ValueError:
+            pass
+    raise HTTPException(404, f"instance {instance_id!r} not found")
 
 
 @app.get(
@@ -655,9 +666,21 @@ def get_cloud_init_user_data(instance_id: str) -> Response:
 )
 def get_cloud_init_meta_data(instance_id: str) -> Response:
     entry = _cloud_init_store.get(instance_id)
-    if not entry:
-        raise HTTPException(404, f"instance {instance_id!r} not found")
-    return Response(content=entry["meta_data"], media_type="text/yaml")
+    if entry:
+        return Response(content=entry["meta_data"], media_type="text/yaml")
+    # Fall back to MAC-based resolution
+    if _engine is not None and validate_mac(instance_id):
+        mac = normalize_mac(instance_id)
+        try:
+            rule = _engine._resolve_rule(mac)
+            profile = _engine._load_profile_for_rule(rule)
+            hostname = profile.network.get("hostname", profile.name)
+            from pxeos.cloud_init import generate_meta_data
+            content = generate_meta_data(hostname)
+            return Response(content=content, media_type="text/yaml")
+        except ValueError:
+            pass
+    raise HTTPException(404, f"instance {instance_id!r} not found")
 
 
 @app.get(
@@ -666,11 +689,20 @@ def get_cloud_init_meta_data(instance_id: str) -> Response:
 )
 def get_cloud_init_network_config(instance_id: str) -> Response:
     entry = _cloud_init_store.get(instance_id)
-    if not entry:
-        raise HTTPException(404, f"instance {instance_id!r} not found")
-    return Response(
-        content=entry["network_config"], media_type="text/yaml"
-    )
+    if entry:
+        return Response(content=entry["network_config"], media_type="text/yaml")
+    # Fall back to MAC-based resolution
+    if _engine is not None and validate_mac(instance_id):
+        mac = normalize_mac(instance_id)
+        try:
+            rule = _engine._resolve_rule(mac)
+            profile = _engine._load_profile_for_rule(rule)
+            from pxeos.cloud_init import generate_network_config
+            content = generate_network_config(profile)
+            return Response(content=content, media_type="text/yaml")
+        except ValueError:
+            pass
+    raise HTTPException(404, f"instance {instance_id!r} not found")
 
 
 # ---------------------------------------------------------------
@@ -1290,6 +1322,112 @@ class ApiKeyListItem(BaseModel):
     enabled: bool
     created_at: float
     last_used_at: Optional[float] = None
+
+
+# ---------------------------------------------------------------
+# Cloud image management endpoints (issue #7)
+# ---------------------------------------------------------------
+
+
+class CloudImageResponse(BaseModel):
+    name: str
+    os_family: str
+    vendor: str
+    version: str
+    arch: str = "x86_64"
+    format: str = "qcow2"
+    path: str = ""
+    size_bytes: int = 0
+    cloud_init: bool = True
+
+
+class CloudImageImportRequest(BaseModel):
+    url: str
+    os_family: str
+    vendor: str
+    version: str
+    arch: str = "x86_64"
+    format: str = "qcow2"
+
+
+@app.get(
+    "/api/v1/images",
+    response_model=List[CloudImageResponse],
+    dependencies=[Depends(require_role(Role.VIEWER))],
+)
+def list_cloud_images() -> List[Dict[str, Any]]:
+    """List all imported cloud images."""
+    if _config is None:
+        raise HTTPException(503, "config not initialized")
+    from pxeos.cloud_image import list_images
+
+    images = list_images(data_dir=_config.data_dir)
+    return [
+        {
+            "name": img.name,
+            "os_family": img.os_family,
+            "vendor": img.vendor,
+            "version": img.version,
+            "arch": img.arch,
+            "format": img.format,
+            "path": str(img.path),
+            "size_bytes": img.size_bytes,
+            "cloud_init": img.cloud_init,
+        }
+        for img in images
+    ]
+
+
+@app.post(
+    "/api/v1/images/import",
+    response_model=CloudImageResponse,
+    status_code=201,
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
+def import_cloud_image(req: CloudImageImportRequest) -> Dict[str, Any]:
+    """Import a cloud image from a URL."""
+    if _config is None:
+        raise HTTPException(503, "config not initialized")
+    from pxeos.cloud_image import import_cloud_image as do_import
+
+    try:
+        image = do_import(
+            source=req.url,
+            os_family=req.os_family,
+            vendor=req.vendor,
+            version=req.version,
+            arch=req.arch,
+            fmt=req.format,
+            data_dir=_config.data_dir,
+        )
+        return {
+            "name": image.name,
+            "os_family": image.os_family,
+            "vendor": image.vendor,
+            "version": image.version,
+            "arch": image.arch,
+            "format": image.format,
+            "path": str(image.path),
+            "size_bytes": image.size_bytes,
+            "cloud_init": image.cloud_init,
+        }
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.delete(
+    "/api/v1/images/{name}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def delete_cloud_image(name: str) -> Dict[str, str]:
+    """Delete a cloud image by name."""
+    if _config is None:
+        raise HTTPException(503, "config not initialized")
+    from pxeos.cloud_image import delete_image
+
+    if not delete_image(name, data_dir=_config.data_dir):
+        raise HTTPException(404, f"image {name!r} not found")
+    return {"name": name, "status": "deleted"}
 
 
 @app.post(

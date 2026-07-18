@@ -48,6 +48,19 @@ class DistroAssets:
 
 
 @dataclass
+class CloudImage:
+    name: str
+    os_family: str
+    vendor: str
+    version: str
+    arch: str = "x86_64"
+    format: str = "qcow2"  # qcow2, raw, vmdk, vhd, vhdx
+    path: Path = field(default_factory=lambda: Path("."))
+    size_bytes: int = 0
+    cloud_init: bool = True
+
+
+@dataclass
 class HostRule:
     profile: str
     os_family: str
@@ -65,3 +78,4 @@ class HostRule:
     bmc_user: Optional[str] = None
     bmc_password: Optional[str] = None
     bmc_driver: Optional[str] = None  # "ipmi" or "redfish"
+    deploy_mode: str = "pxe"  # "pxe" or "image"
