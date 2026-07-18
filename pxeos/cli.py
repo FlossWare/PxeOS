@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import List, Optional, Sequence
@@ -72,6 +73,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_auth_parser(sub)
     _add_power_parser(sub)
     _add_migrate_parser(sub)
+    _add_image_parser(sub)
 
     return parser
 
@@ -1660,6 +1662,159 @@ def _cmd_migrate(
     return 1
 
 
+def _add_image_parser(
+    sub: argparse._SubParsersAction,
+) -> None:
+    image = sub.add_parser(
+        "image", help="manage cloud images (qcow2/raw/vmdk)"
+    )
+    image_sub = image.add_subparsers(dest="image_action")
+
+    imp = image_sub.add_parser(
+        "import", help="import a cloud image"
+    )
+    source = imp.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "--url", help="URL to download the image from"
+    )
+    source.add_argument(
+        "--file", type=Path, dest="file_path",
+        help="local path to the image file",
+    )
+    imp.add_argument(
+        "--os", dest="os_family", required=True,
+        help="OS family (e.g. fedora, ubuntu)",
+    )
+    imp.add_argument(
+        "--vendor", required=True,
+        help="image vendor (e.g. fedora, canonical)",
+    )
+    imp.add_argument(
+        "--version", dest="os_version", required=True,
+        help="OS version",
+    )
+    imp.add_argument(
+        "--arch", default="x86_64", help="architecture"
+    )
+    imp.add_argument(
+        "--format", dest="fmt",
+        default="qcow2",
+        choices=["qcow2", "raw", "vmdk", "vhd", "vhdx"],
+        help="image format (default: qcow2)",
+    )
+
+    image_sub.add_parser("list", help="list cloud images")
+
+    d = image_sub.add_parser(
+        "delete", help="delete a cloud image"
+    )
+    d.add_argument("name", help="image name to delete")
+
+    conv = image_sub.add_parser(
+        "convert", help="convert image format"
+    )
+    conv.add_argument(
+        "--source", type=Path, required=True,
+        help="source image path",
+    )
+    conv.add_argument(
+        "--format", dest="fmt", required=True,
+        choices=["qcow2", "raw", "vmdk", "vhd", "vhdx"],
+        help="target format",
+    )
+    conv.add_argument(
+        "--output", "-o", type=Path, default=None,
+        help="output path (defaults to source with new extension)",
+    )
+
+
+def _cmd_image(
+    args: argparse.Namespace,
+    config: PxeOSConfig,
+) -> int:
+    from pxeos.cloud_image import (
+        convert_image,
+        delete_image,
+        import_cloud_image,
+        list_images,
+    )
+
+    if args.image_action == "import":
+        source = args.url if args.url else str(args.file_path)
+        try:
+            image = import_cloud_image(
+                source=source,
+                os_family=args.os_family,
+                vendor=args.vendor,
+                version=args.os_version,
+                arch=args.arch,
+                fmt=args.fmt,
+                data_dir=config.data_dir,
+            )
+            print(f"imported: {image.name}")
+            print(f"  path:   {image.path}")
+            print(f"  format: {image.format}")
+            print(f"  size:   {image.size_bytes} bytes")
+            return 0
+        except (ValueError, FileNotFoundError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    elif args.image_action == "list":
+        images = list_images(data_dir=config.data_dir)
+        if not images:
+            print("no cloud images imported")
+            return 0
+        fmt = "{:<30s} {:<10s} {:<8s} {:<10s} {}"
+        print(fmt.format(
+            "NAME", "OS", "FORMAT", "ARCH", "SIZE",
+        ))
+        print("-" * 75)
+        for img in images:
+            size_str = _human_size(img.size_bytes)
+            print(fmt.format(
+                img.name,
+                f"{img.os_family}/{img.version}",
+                img.format,
+                img.arch,
+                size_str,
+            ))
+        return 0
+
+    elif args.image_action == "delete":
+        if delete_image(args.name, data_dir=config.data_dir):
+            print(f"deleted image: {args.name}")
+            return 0
+        print(f"image not found: {args.name}")
+        return 1
+
+    elif args.image_action == "convert":
+        output = args.output
+        if output is None:
+            output = args.source.with_suffix(f".{args.fmt}")
+        try:
+            result = convert_image(args.source, args.fmt, output)
+            print(f"converted: {result}")
+            return 0
+        except (ValueError, FileNotFoundError, subprocess.CalledProcessError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    print(
+        "usage: pxeos image {import|list|delete|convert}"
+    )
+    return 1
+
+
+def _human_size(nbytes: int) -> str:
+    """Format bytes as a human-readable size string."""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if nbytes < 1024:
+            return f"{nbytes:.1f} {unit}"
+        nbytes /= 1024
+    return f"{nbytes:.1f} PB"
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = _build_parser()
 
@@ -1722,6 +1877,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _cmd_power(args, config, matcher)
     elif args.command == "migrate":
         return _cmd_migrate(args, config, registry)
+    elif args.command == "image":
+        return _cmd_image(args, config)
 
     parser.print_help()
     return 1

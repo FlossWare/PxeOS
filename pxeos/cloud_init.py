@@ -114,6 +114,37 @@ def _render_network_config(profile: ProvisionProfile) -> str:
     )
 
 
+def generate_user_data(profile: ProvisionProfile) -> str:
+    """Generate cloud-init user-data YAML from a provision profile."""
+    return _render_user_data(profile)
+
+
+def generate_meta_data(
+    hostname: str,
+    instance_id: Optional[str] = None,
+) -> str:
+    """Generate cloud-init meta-data YAML.
+
+    Parameters
+    ----------
+    hostname:
+        The hostname for the instance.
+    instance_id:
+        Optional instance ID; defaults to ``hostname``.
+    """
+    template = _env.get_template("cloud-init-metadata.j2")
+    return template.render(
+        instance_id=instance_id or hostname,
+        hostname=hostname,
+        extra_meta={},
+    )
+
+
+def generate_network_config(profile: ProvisionProfile) -> str:
+    """Generate cloud-init v2 netplan network config from a profile."""
+    return _render_network_config(profile)
+
+
 def create_config_drive(
     profile: ProvisionProfile,
     output_path: Path,
