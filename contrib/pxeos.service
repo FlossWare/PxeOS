@@ -1,0 +1,27 @@
+[Unit]
+Description=PxeOS Provisioning Server
+Documentation=https://github.com/FlossWare/PxeOS
+After=network.target
+# If DHCP/TFTP runs on the same host, uncomment to order startup:
+# After=network.target dnsmasq.service
+# After=network.target tftpd-hpa.service isc-dhcp-server.service
+
+[Service]
+Type=simple
+User=pxeos
+Group=pxeos
+ExecStart=/usr/bin/pxeos server start --config /etc/pxeos/pxeos.toml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pxeos
+ReadOnlyPaths=/etc/pxeos
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

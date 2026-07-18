@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>PxeOS</short>
+  <description>PxeOS PXE boot provisioning server. Provides HTTP/HTTPS API for iPXE boot scripts, autoinstall config generation, and provisioning management.</description>
+  <port protocol="tcp" port="8443"/>
+</service>
