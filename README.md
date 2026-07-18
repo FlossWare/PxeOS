@@ -4,9 +4,17 @@ Cross-OS PXE boot provisioning system supporting Linux, BSD, and Windows.
 
 ## Overview
 
-PxeOS is a standalone PXE provisioning tool with a plugin architecture that supports automated installation across 9 OS families. Define a profile once, PxeOS renders the correct native autoinstall format for the target OS.
+PxeOS is a standalone PXE provisioning tool with a plugin architecture that supports automated installation across 10 OS families. Define a profile once, PxeOS renders the correct native autoinstall format for the target OS.
 
 Works standalone for bare-metal provisioning, or as a composable service that [VirtOS](https://github.com/FlossWare/VirtOS) can call for VM provisioning.
+
+## Project Status
+
+PxeOS is **functional but pre-production**. It has 921 unit tests with 68% branch coverage across all 10 OS plugins, but has not yet been validated with real PXE-booting hardware. See the documentation below for full details:
+
+- **[Deployment Guide](docs/DEPLOYMENT.md)** -- Installation, systemd service, firewall rules, SELinux, TLS, and HA
+- **[Known Limitations](docs/KNOWN_LIMITATIONS.md)** -- Honest assessment of test coverage gaps and what needs work
+- **[Comparison with Other Tools](docs/COMPARISON.md)** -- How PxeOS compares to Cobbler, Foreman, MAAS, and Ironic
 
 ## Supported OS Families
 
@@ -419,6 +427,48 @@ PxeOS works standalone or as a service consumed by VirtOS:
 - Only import ISOs from trusted sources -- a malicious ISO can supply a compromised kernel
 - Verify ISO checksums before import (GPG signatures where available)
 - The `import/fetch` REST endpoint downloads ISOs from arbitrary URLs -- restrict API access accordingly
+
+## Production Readiness
+
+PxeOS is an **alpha-stage** project (see `pyproject.toml` classifier). Before using in production, be aware of:
+
+**What works (tested):**
+- Autoinstall config generation for all 10 OS families (921 unit tests)
+- Plugin discovery and loading via setuptools entry points
+- Host matching (MAC, hostname, subnet, group priority chain)
+- Boot-once provisioning (disable/enable netboot)
+- Cloud-init config generation (user-data, meta-data, network-config)
+- REST API endpoints (FastAPI with OpenAPI documentation)
+- API key authentication and RBAC
+
+**What has NOT been tested:**
+- Actual PXE boot on real or virtual hardware
+- TFTP file serving with real TFTP clients
+- Integration with real DHCP servers
+- TLS termination with real certificates
+- Concurrent provisioning under load
+- Long-running stability
+
+**What is missing:**
+- IPMI/BMC power management ([#29](https://github.com/FlossWare/PxeOS/issues/29))
+- Cobbler migration tool ([#30](https://github.com/FlossWare/PxeOS/issues/30))
+- Built-in DHCP/DNS management
+- Configuration management integration (Puppet/Ansible)
+- Database backend (currently file-based)
+
+For full details, see [Known Limitations](docs/KNOWN_LIMITATIONS.md) and [Comparison](docs/COMPARISON.md).
+
+## Deployment
+
+See the [Deployment Guide](docs/DEPLOYMENT.md) for:
+- Installation and configuration
+- Systemd service setup (`contrib/pxeos.service`)
+- Firewall rules (`contrib/pxeos.firewalld.xml`)
+- SELinux and AppArmor notes
+- TLS configuration
+- DHCP server setup (dnsmasq / ISC DHCP)
+- Backup and high availability
+- Troubleshooting
 
 ## Development
 
