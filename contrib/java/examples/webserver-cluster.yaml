@@ -1,0 +1,26 @@
+deployment:
+  name: webserver-cluster
+  nodes:
+    - hostname: web-01
+      mac: "aa:bb:cc:dd:ee:f1"
+      provision:
+        server: http://pxeos.local:8443
+        profile: webserver
+        os: fedora
+        version: "42"
+
+    - hostname: web-02
+      mac: "aa:bb:cc:dd:ee:f2"
+      provision:
+        server: http://pxeos.local:8443
+        profile: webserver
+        os: freebsd
+        version: "14.2"
+
+    - hostname: web-03
+      mac: "aa:bb:cc:dd:ee:f3"
+      provision:
+        server: http://pxeos.local:8443
+        profile: webserver
+        os: debian
+        version: "12"
