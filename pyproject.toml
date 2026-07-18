@@ -100,7 +100,7 @@ Documentation = "https://github.com/FlossWare/PxeOS/blob/main/README.md"
 "Bug Tracker" = "https://github.com/FlossWare/PxeOS/issues"
 
 [tool.setuptools]
-packages = ["pxeos", "pxeos.plugins"]
+packages = ["pxeos", "pxeos.plugins", "pxeos.client"]
 
 [tool.setuptools.package-data]
 pxeos = ["py.typed", "templates/*.j2", "web/templates/*.html", "web/static/**/*"]

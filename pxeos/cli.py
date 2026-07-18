@@ -272,6 +272,53 @@ def _add_client_parser(
         help="list available profiles",
     )
 
+    virt = client_sub.add_parser(
+        "virt",
+        help="create and provision a VM via native hypervisor",
+    )
+    virt.add_argument(
+        "--server", required=True,
+        help="PxeOS server URL (e.g. http://pxe.local:8443)",
+    )
+    virt.add_argument(
+        "--profile", required=True,
+        help="provision profile name",
+    )
+    virt.add_argument(
+        "--backend",
+        choices=["libvirt", "bhyve", "vmm", "hyperv"],
+        default=None,
+        help="hypervisor backend (auto-detect if omitted)",
+    )
+    virt.add_argument(
+        "--name", default=None,
+        help="VM name (auto-generated if omitted)",
+    )
+    virt.add_argument(
+        "--os", dest="os_family", default="fedora",
+        help="OS family (default: fedora)",
+    )
+    virt.add_argument(
+        "--version", dest="os_version", default="40",
+        help="OS version (default: 40)",
+    )
+    virt.add_argument(
+        "--memory", type=int, default=2048,
+        help="memory in MB (default: 2048)",
+    )
+    virt.add_argument(
+        "--vcpus", type=int, default=2,
+        help="virtual CPUs (default: 2)",
+    )
+    virt.add_argument(
+        "--disk", type=int, default=20,
+        help="disk size in GB (default: 20)",
+    )
+    virt.add_argument(
+        "--bridge", default=None,
+        help="network bridge (hypervisor-specific default)",
+    )
+
 
 def _add_cloud_init_parser(
     sub: argparse._SubParsersAction,
@@ -858,11 +905,88 @@ def _cmd_client(
                 pass
         return 0
 
+    elif args.client_action == "virt":
+        return _cmd_client_virt(args)
+
     print(
         "usage: pxeos client "
-        "{register|replace|list-profiles}"
+        "{register|replace|list-profiles|virt}"
     )
     return 1
+
+
+def _cmd_client_virt(
+    args: argparse.Namespace,
+) -> int:
+    """Handle 'pxeos client virt' -- create and provision a VM."""
+    from pxeos.client.base import VirtBackend, detect_hypervisor
+    from pxeos.client.workflow import provision_vm
+
+    # Resolve backend
+    backend: Optional[VirtBackend] = None
+    if args.backend:
+        backend = _get_backend_by_name(args.backend)
+        if backend is None or not backend.is_available():
+            print(
+                f"error: backend {args.backend!r} is not available "
+                f"on this system",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        backend = detect_hypervisor()
+        if backend is None:
+            print(
+                "error: no supported hypervisor detected. "
+                "Install libvirt, bhyve, vmm, or Hyper-V, "
+                "or specify --backend explicitly.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"auto-detected hypervisor: {backend.hypervisor_name}")
+
+    # Generate VM name if not provided
+    import time as _time
+    name = args.name or f"pxeos-{int(_time.time())}"
+
+    try:
+        result = provision_vm(
+            server_url=args.server,
+            profile=args.profile,
+            backend=backend,
+            name=name,
+            os_family=args.os_family,
+            os_version=args.os_version,
+            memory_mb=args.memory,
+            vcpus=args.vcpus,
+            disk_gb=args.disk,
+            bridge=args.bridge,
+        )
+        print(f"VM:         {result['name']}")
+        print(f"MAC:        {result['mac']}")
+        print(f"Hypervisor: {result['hypervisor']}")
+        print(f"Status:     {result['status']}")
+        return 0
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+def _get_backend_by_name(name: str) -> Optional[VirtBackend]:
+    """Return a VirtBackend instance by name."""
+    if name == "libvirt":
+        from pxeos.client.libvirt_backend import LibvirtBackend
+        return LibvirtBackend()
+    elif name == "bhyve":
+        from pxeos.client.bhyve_backend import BhyveBackend
+        return BhyveBackend()
+    elif name == "vmm":
+        from pxeos.client.vmm_backend import VmmBackend
+        return VmmBackend()
+    elif name == "hyperv":
+        from pxeos.client.hyperv_backend import HyperVBackend
+        return HyperVBackend()
+    return None
 
 
 def _build_cloud_init_profile(
