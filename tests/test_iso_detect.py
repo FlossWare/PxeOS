@@ -1222,8 +1222,9 @@ class TestResolveDistroArgsIso:
         _resolve_distro_args(args)
 
     def test_url_import_still_requires_os_and_version(self):
-        """Without --iso, missing --os and --version cause sys.exit."""
+        """Without --iso, missing --os and --version raise ValidationError."""
         from pxeos.cli import _resolve_distro_args
+        from pxeos.errors import ValidationError
 
         args = MagicMock()
         args.distro = None
@@ -1232,7 +1233,7 @@ class TestResolveDistroArgsIso:
         args.os_version = None
         args.iso = None
 
-        with pytest.raises(SystemExit):
+        with pytest.raises(ValidationError):
             _resolve_distro_args(args)
 
     def test_distro_mnemonic_still_resolves_for_iso(self):

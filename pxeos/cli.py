@@ -25,6 +25,14 @@ from pxeos.config import (
     load_profile,
 )
 from pxeos.engine import ProvisioningEngine
+from pxeos.errors import (
+    ConfigError,
+    PxeOSError,
+    PluginError,
+    ProvisionError,
+    ValidationError,
+    format_error,
+)
 from pxeos.matcher import HostMatcher
 from pxeos.models import HostRule
 from pxeos.registry import PluginRegistry
@@ -57,6 +65,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="emit JSON-formatted log lines",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="show full tracebacks on errors",
     )
 
     sub = parser.add_subparsers(dest="command")
@@ -420,7 +434,17 @@ def _init_stack(
     config_path: Path,
 ) -> tuple[PxeOSConfig, PluginRegistry, HostMatcher]:
     if config_path.exists():
-        config = load_config(config_path)
+        try:
+            config = load_config(config_path)
+        except ValueError as exc:
+            raise ConfigError(
+                str(exc),
+                suggestion=(
+                    f"Check that {config_path} is valid TOML. "
+                    "See examples/ for a sample configuration."
+                ),
+                context={"config_path": str(config_path)},
+            ) from exc
     else:
         config = PxeOSConfig()
 
@@ -431,7 +455,17 @@ def _init_stack(
     hosts_path = config.data_dir / "hosts.toml"
     rules: List[HostRule] = []
     if hosts_path.exists():
-        rules = load_hosts(hosts_path)
+        try:
+            rules = load_hosts(hosts_path)
+        except ValueError as exc:
+            raise ConfigError(
+                str(exc),
+                suggestion=(
+                    f"Check that {hosts_path} is valid TOML "
+                    "with [[host]] sections."
+                ),
+                context={"hosts_path": str(hosts_path)},
+            ) from exc
     matcher = HostMatcher(rules)
 
     return config, registry, matcher
@@ -491,12 +525,14 @@ def _resolve_distro_args(args: argparse.Namespace) -> None:
 
         alias = resolve_mnemonic(args.distro)
         if alias is None:
-            print(
-                f"error: unknown mnemonic {args.distro!r}. "
-                "Use 'pxeos distro aliases' to list available mnemonics.",
-                file=sys.stderr,
+            raise ValidationError(
+                f"unknown mnemonic {args.distro!r}",
+                suggestion=(
+                    "Use 'pxeos distro aliases' to list "
+                    "available mnemonics."
+                ),
+                context={"mnemonic": args.distro},
             )
-            sys.exit(1)
         if not args.os_family:
             args.os_family = alias.os_family
         if not args.vendor:
@@ -509,11 +545,14 @@ def _resolve_distro_args(args: argparse.Namespace) -> None:
         return
 
     if not args.os_family or not args.os_version:
-        print(
-            "error: --distro or both --os and --version required",
-            file=sys.stderr,
+        raise ValidationError(
+            "--distro or both --os and --version required",
+            suggestion=(
+                "Provide --distro (e.g. fedora42) or both "
+                "--os and --version flags. "
+                "Run 'pxeos distro aliases' to see valid mnemonics."
+            ),
         )
-        sys.exit(1)
 
 
 def _cmd_import(
@@ -525,12 +564,14 @@ def _cmd_import(
 
     # Validate ISO file exists before attempting to mount
     if args.iso and not args.iso.exists():
-        print(
-            f"error: ISO file not found: {args.iso}\n"
-            f"hint: check the path and ensure the file exists.",
-            file=sys.stderr,
+        raise ValidationError(
+            f"ISO file not found: {args.iso}",
+            suggestion=(
+                "Check the path and ensure the file exists. "
+                "Use an absolute path to avoid ambiguity."
+            ),
+            context={"path_checked": str(args.iso)},
         )
-        return 1
 
     _resolve_distro_args(args)
 
@@ -562,9 +603,16 @@ def _cmd_import(
                     f"does not support live ISO import",
                     file=sys.stderr,
                 )
-        except ValueError as exc:
-            print(f"\nerror: {exc}", file=sys.stderr)
-            return 1
+        except ValueError:
+            raise PluginError(
+                f"no plugin for os_family {args.os_family!r}",
+                suggestion=(
+                    f"Available plugins: "
+                    f"{', '.join(registry.available)}. "
+                    "Check spelling or install a third-party plugin."
+                ),
+                context={"os_family": args.os_family},
+            )
 
         dir_vendor = args.vendor or args.os_family
         if live:
@@ -648,8 +696,23 @@ def _cmd_profile(
     elif args.profile_action == "show":
         path = profiles_dir / f"{args.name}.toml"
         if not path.exists():
-            print(f"profile not found: {args.name}")
-            return 1
+            # List available profiles for suggestion
+            available = [
+                f.stem for f in sorted(profiles_dir.glob("*.toml"))
+            ] if profiles_dir.exists() else []
+            suggestion = (
+                f"Available profiles: {', '.join(available)}"
+                if available
+                else "No profiles configured. Use 'pxeos profile add' to create one."
+            )
+            raise ProvisionError(
+                f"profile not found: {args.name!r}",
+                suggestion=suggestion,
+                context={
+                    "profile": args.name,
+                    "profiles_dir": str(profiles_dir),
+                },
+            )
         p = load_profile(path)
         print(f"name:     {p.name}")
         print(f"os:       {p.os_family} {p.os_version}")
@@ -667,8 +730,19 @@ def _cmd_profile(
             path.unlink()
             print(f"deleted profile: {args.name}")
         else:
-            print(f"profile not found: {args.name}")
-            return 1
+            available = [
+                f.stem for f in sorted(profiles_dir.glob("*.toml"))
+            ] if profiles_dir.exists() else []
+            suggestion = (
+                f"Available profiles: {', '.join(available)}"
+                if available
+                else "No profiles configured."
+            )
+            raise ProvisionError(
+                f"profile not found: {args.name!r}",
+                suggestion=suggestion,
+                context={"profile": args.name},
+            )
         return 0
 
     print("usage: pxeos profile {add|list|show|delete}")
@@ -1144,11 +1218,15 @@ def _cmd_provision(
     from pxeos.validation import normalize_mac, validate_mac
 
     if not validate_mac(args.mac):
-        print(
-            f"error: invalid MAC address format: {args.mac!r}",
-            file=sys.stderr,
+        raise ValidationError(
+            f"invalid MAC address format: {args.mac!r}",
+            suggestion=(
+                "Expected format: xx:xx:xx:xx:xx:xx (colon-separated), "
+                "xx-xx-xx-xx-xx-xx (dash-separated), or xxxxxxxxxxxx "
+                "(bare hex). Example: aa:bb:cc:dd:ee:ff"
+            ),
+            context={"mac": args.mac},
         )
-        return 1
 
     mac = normalize_mac(args.mac)
     engine = ProvisioningEngine(registry, matcher, config)
@@ -1163,14 +1241,10 @@ def _cmd_provision(
         arch=args.arch,
     )
     if rule is None:
-        print(
-            f"error: no matching host rule for MAC {mac!r}",
-            file=sys.stderr,
-        )
-        # Show what rules exist so the user can debug
+        # Build a helpful suggestion listing existing rules
         rules = matcher._rules
         if rules:
-            print("\nConfigured host rules:", file=sys.stderr)
+            rule_lines = []
             for r in rules:
                 criteria = []
                 if r.mac:
@@ -1188,17 +1262,22 @@ def _cmd_provision(
                 if r.arch:
                     criteria.append(f"arch={r.arch}")
                 match_str = ", ".join(criteria) if criteria else "default"
-                print(
-                    f"  [{r.priority:3d}] {r.profile:<20s} ({match_str})",
-                    file=sys.stderr,
+                rule_lines.append(
+                    f"  [{r.priority:3d}] {r.profile:<20s} ({match_str})"
                 )
-        else:
-            print(
-                "hint: no host rules configured. "
-                "Use 'pxeos host add' to create one.",
-                file=sys.stderr,
+            suggestion = (
+                "Configured host rules:\n" + "\n".join(rule_lines)
             )
-        return 1
+        else:
+            suggestion = (
+                "No host rules configured. "
+                "Use 'pxeos host add' to create one."
+            )
+        raise ProvisionError(
+            f"no matching host rule for MAC {mac!r}",
+            suggestion=suggestion,
+            context={"mac": mac},
+        )
 
     if args.dry_run:
         print("[dry-run] Provisioning preview:")
@@ -1212,9 +1291,16 @@ def _cmd_provision(
 
         try:
             plugin = registry.get(rule.os_family)
-        except ValueError as exc:
-            print(f"\nerror: {exc}", file=sys.stderr)
-            return 1
+        except ValueError:
+            raise PluginError(
+                f"no plugin for os_family {rule.os_family!r}",
+                suggestion=(
+                    f"Available plugins: "
+                    f"{', '.join(registry.available)}. "
+                    "Check spelling or install a third-party plugin."
+                ),
+                context={"os_family": rule.os_family},
+            )
 
         print(f"  plugin:    {plugin.os_family}")
         print()
@@ -1233,8 +1319,14 @@ def _cmd_provision(
             arch=args.arch,
         )
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        raise ProvisionError(
+            str(exc),
+            suggestion=(
+                "Check that the profile exists and is valid. "
+                "Use 'pxeos profile list' to see available profiles."
+            ),
+            context={"mac": mac},
+        ) from exc
 
     print(f"kernel: {assets.kernel}")
     if assets.initrd:
@@ -2027,10 +2119,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         json_format=getattr(args, "log_json", False),
     )
 
+    verbose = getattr(args, "verbose", False)
+
     if not args.command:
         parser.print_help()
         return 1
 
+    try:
+        return _dispatch(args, verbose)
+    except PxeOSError as exc:
+        print(
+            format_error(exc, verbose=verbose),
+            file=sys.stderr,
+        )
+        return 1
+
+
+def _dispatch(
+    args: argparse.Namespace, verbose: bool
+) -> int:
+    """Route *args* to the appropriate command handler.
+
+    PxeOSError exceptions are allowed to propagate so that
+    ``main()`` can format them uniformly.
+    """
     # Distro mnemonic subcommands don't need config;
     # named-distro CRUD subcommands do.  Let _cmd_distro
     # handle both -- pass config when available.
@@ -2080,7 +2192,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     elif args.command == "mirror":
         return _cmd_mirror(args, config)
 
-    parser.print_help()
     return 1
 
 
