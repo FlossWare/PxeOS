@@ -36,7 +36,7 @@ class TestBuildParser:
 
         assert subparser_action is not None
         registered = set(subparser_action.choices.keys())
-        expected = {"server", "import", "profile", "host", "client", "cloud-init", "provision", "distro", "secret", "named-host", "auth", "power", "migrate"}
+        expected = {"server", "import", "profile", "host", "client", "cloud-init", "provision", "distro", "secret", "named-host", "auth", "power", "migrate", "service"}
         assert expected == registered
 
     def test_config_default_path(self):

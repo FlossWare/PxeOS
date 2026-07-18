@@ -34,6 +34,8 @@ class PxeOSConfig:
         default_factory=lambda: Path("/etc/pxeos")
     )
     auth_enabled: bool = False
+    service_name: str = "pxeos"
+    enable_discovery: bool = False
 
 
 def load_config(path: Path) -> PxeOSConfig:
@@ -52,6 +54,7 @@ def load_config(path: Path) -> PxeOSConfig:
     server = data.get("server", {})
     paths = data.get("paths", {})
     auth = data.get("auth", {})
+    discovery = data.get("discovery", {})
 
     tls_cert = server.get("tls_cert")
     tls_key = server.get("tls_key")
@@ -67,6 +70,8 @@ def load_config(path: Path) -> PxeOSConfig:
         ),
         data_dir=Path(paths.get("data_dir", "/etc/pxeos")),
         auth_enabled=auth.get("enabled", False),
+        service_name=discovery.get("service_name", "pxeos"),
+        enable_discovery=discovery.get("enabled", False),
     )
 
 
