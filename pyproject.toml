@@ -28,50 +28,54 @@ classifiers = [
     "Operating System :: POSIX :: BSD :: NetBSD",
     "Operating System :: POSIX :: BSD :: OpenBSD",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: System :: Installation/Setup",
     "Topic :: System :: Systems Administration",
 ]
-requires-python = ">=3.9"
+# Supported Python versions: 3.10, 3.11, 3.12, 3.13
+requires-python = ">=3.10"
 dependencies = [
-    "jinja2>=3.1.0",
-    "fastapi>=0.100.0",
-    "uvicorn>=0.22.0",
-    "tomli>=2.0.0; python_version < '3.11'",
-    "pydantic>=2.0.0",
-    "python-multipart>=0.0.6",
+    # Required: template engine for boot scripts and autoinstall configs
+    "jinja2>=3.1.0,<4.0",
+    # Required: async web framework for the REST API
+    "fastapi>=0.100.0,<1.0",
+    # Required: ASGI server
+    "uvicorn>=0.22.0,<1.0",
+    # Required: TOML parsing on Python <3.11 (stdlib tomllib from 3.11+)
+    "tomli>=2.0.0,<3.0; python_version < '3.11'",
+    # Required: data validation for API models
+    "pydantic>=2.0.0,<3.0",
+    # Required: multipart form handling for ISO upload
+    "python-multipart>=0.0.6,<1.0",
 ]
 
 [project.optional-dependencies]
-completion = ["argcomplete"]
+# Optional: shell tab-completion support
+completion = ["argcomplete>=3.0,<4.0"]
+# Development and testing tools
 dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "pytest-xdist>=3.0.0",
-    "pytest-timeout>=2.1.0",
-    "pytest-mock>=3.10.0",
-    "coverage[toml]>=7.0.0",
-    "radon>=5.1.0",
-    "xenon>=0.9.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "ruff>=0.1.0",
-    "flake8>=6.0.0",
-    "flake8-bugbear>=23.0.0",
-    "flake8-comprehensions>=3.10.0",
-    "flake8-simplify>=0.20.0",
-    "pylint>=2.17.0",
-    "mypy>=1.0.0",
-    "bandit>=1.7.5",
-    "safety>=2.3.0",
-    "sphinx>=5.0.0",
-    "sphinx-rtd-theme>=1.2.0",
-    "build>=0.10.0",
-    "wheel>=0.40.0",
-    "setuptools>=65.0.0",
+    # Testing
+    "pytest>=7.0.0,<9.0",
+    "pytest-cov>=4.0.0,<6.0",
+    "pytest-xdist>=3.0.0,<4.0",
+    "pytest-timeout>=2.1.0,<3.0",
+    "pytest-mock>=3.10.0,<4.0",
+    "coverage[toml]>=7.0.0,<8.0",
+    # Code quality
+    "radon>=5.1.0,<7.0",
+    "xenon>=0.9.0,<1.0",
+    "ruff>=0.1.0,<1.0",
+    "mypy>=1.0.0,<2.0",
+    # Security auditing
+    "bandit>=1.7.5,<2.0",
+    "pip-audit>=2.6.0,<3.0",
+    # Build tools
+    "build>=0.10.0,<2.0",
+    "wheel>=0.40.0,<1.0",
+    "setuptools>=65.0.0,<75.0",
 ]
 
 [project.scripts]
@@ -103,7 +107,7 @@ pxeos = ["py.typed", "templates/*.j2", "web/templates/*.html", "web/static/**/*"
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 exclude = [
     ".git",
     ".mypy_cache",
@@ -155,7 +159,7 @@ ignore = [
 
 [tool.black]
 line-length = 88
-target-version = ["py39", "py310", "py311", "py312"]
+target-version = ["py310", "py311", "py312", "py313"]
 include = '\.pyi?$'
 
 [tool.isort]
@@ -280,7 +284,7 @@ filterwarnings = [
 timeout = 300
 
 [tool.pylint.main]
-py-version = "3.9"
+py-version = "3.10"
 ignore-paths = [
     "tests",
     "examples",

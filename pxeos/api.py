@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -18,6 +21,11 @@ from pxeos.registry import PluginRegistry
 from pxeos.auth import ApiKeyStore, Role, get_key_store, init_auth, require_role
 from pxeos.state import ProvisionState, ProvisionTracker
 from pxeos.validation import normalize_mac, validate_mac, validate_os_family
+
+logger = logging.getLogger("pxeos.api")
+
+# Track app start time for health endpoint
+_app_start_time: float = time.time()
 
 app = FastAPI(
     title="PxeOS",
@@ -78,6 +86,9 @@ class HealthResponse(BaseModel):
     status: str
     plugins: List[str]
     version: str
+    uptime_seconds: Optional[float] = None
+    provision_count: Optional[int] = None
+    data_dir_free_bytes: Optional[int] = None
 
 
 class ProvisionStatusResponse(BaseModel):
@@ -151,12 +162,14 @@ def get_boot_script(mac: str) -> Response:
     if _engine is None:
         raise HTTPException(503, "engine not initialized")
     mac = _validate_mac_param(mac)
+    logger.info("Boot script requested mac=%s", mac)
     try:
         script = _engine.render_ipxe_script(mac)
         return Response(
             content=script, media_type="text/plain"
         )
     except ValueError as exc:
+        logger.warning("Boot script failed mac=%s: %s", mac, exc)
         raise HTTPException(404, str(exc))
 
 
@@ -378,11 +391,39 @@ def health_check() -> Dict[str, Any]:
     from pxeos import __version__
 
     plugins = _registry.available if _registry else []
+    uptime = time.time() - _app_start_time
+
+    provision_count = 0
+    if _engine is not None:
+        provision_count = len(_engine.tracker.list_all())
+
+    free_bytes = None
+    if _config is not None and _config.data_dir.exists():
+        try:
+            usage = shutil.disk_usage(str(_config.data_dir))
+            free_bytes = usage.free
+        except OSError:
+            pass
+
     return {
         "status": "ok",
         "plugins": plugins,
         "version": __version__,
+        "uptime_seconds": round(uptime, 1),
+        "provision_count": provision_count,
+        "data_dir_free_bytes": free_bytes,
     }
+
+
+@app.get("/metrics")
+def prometheus_metrics() -> Response:
+    """Prometheus-compatible metrics endpoint."""
+    from pxeos.metrics import render_metrics
+
+    return Response(
+        content=render_metrics(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 # ---------------------------------------------------------------

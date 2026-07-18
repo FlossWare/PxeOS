@@ -6,6 +6,7 @@ import enum
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets as stdlib_secrets
 import time
@@ -18,6 +19,8 @@ from fastapi.security import (
     HTTPAuthorizationCredentials,
     HTTPBearer,
 )
+
+logger = logging.getLogger("pxeos.auth")
 
 _FILE_PERMS = 0o600
 _DIR_PERMS = 0o700
@@ -179,10 +182,18 @@ def require_role(min_role: Role):
             HTTPAuthorizationCredentials
         ] = Depends(_bearer_scheme),
     ) -> Optional[ApiKey]:
+        from pxeos.metrics import auth_attempts_total
+
         if not _auth_enabled or _key_store is None:
             return None
 
         if credentials is None:
+            logger.warning(
+                "Auth failure: no credentials provided "
+                "for role=%s",
+                min_role.value,
+            )
+            auth_attempts_total.inc(result="failure")
             raise HTTPException(
                 status_code=401,
                 detail="API key required",
@@ -191,6 +202,12 @@ def require_role(min_role: Role):
 
         api_key = _key_store.validate(credentials.credentials)
         if api_key is None:
+            logger.warning(
+                "Auth failure: invalid or disabled key "
+                "for role=%s",
+                min_role.value,
+            )
+            auth_attempts_total.inc(result="failure")
             raise HTTPException(
                 status_code=401,
                 detail="Invalid or disabled API key",
@@ -198,6 +215,13 @@ def require_role(min_role: Role):
             )
 
         if not role_has_access(api_key.role, min_role):
+            logger.warning(
+                "Auth failure: insufficient role "
+                "name=%s role=%s required=%s",
+                api_key.name, api_key.role.value,
+                min_role.value,
+            )
+            auth_attempts_total.inc(result="failure")
             raise HTTPException(
                 status_code=403,
                 detail=(
@@ -206,6 +230,11 @@ def require_role(min_role: Role):
                 ),
             )
 
+        logger.debug(
+            "Auth success name=%s role=%s",
+            api_key.name, api_key.role.value,
+        )
+        auth_attempts_total.inc(result="success")
         return api_key
 
     return _dependency

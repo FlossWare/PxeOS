@@ -44,6 +44,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=Path("/etc/pxeos/pxeos.toml"),
         help="path to config file",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="set logging level (default: INFO)",
+    )
+    parser.add_argument(
+        "--log-json",
+        action="store_true",
+        default=False,
+        help="emit JSON-formatted log lines",
+    )
 
     sub = parser.add_subparsers(dest="command")
 
@@ -1518,6 +1530,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         argcomplete.autocomplete(parser)
 
     args = parser.parse_args(argv)
+
+    # Initialize logging before anything else
+    from pxeos.logging_config import setup_logging
+
+    setup_logging(
+        level=getattr(args, "log_level", "INFO"),
+        json_format=getattr(args, "log_json", False),
+    )
 
     if not args.command:
         parser.print_help()
