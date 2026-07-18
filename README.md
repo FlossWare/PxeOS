@@ -16,6 +16,79 @@ PxeOS is **functional but pre-production**. It has 921 unit tests with 68% branc
 - **[Known Limitations](docs/KNOWN_LIMITATIONS.md)** -- Honest assessment of test coverage gaps and what needs work
 - **[Comparison with Other Tools](docs/COMPARISON.md)** -- How PxeOS compares to Cobbler, Foreman, MAAS, and Ironic
 
+## Alpha Status & Known Limitations
+
+> **PxeOS is alpha software (Development Status :: 3 - Alpha).** It has **never been used to PXE-boot a real machine**, physical or virtual. Treat every feature claim below as "generates plausible output" rather than "confirmed working end-to-end."
+
+### No real-world PXE boot validation
+
+This is the single largest gap. All 921 unit tests validate that PxeOS *produces correct-looking output*. None of them verify that the output actually boots and installs an OS. Specifically:
+
+- No generated Kickstart file has been consumed by Anaconda.
+- No generated Preseed file has been consumed by debian-installer.
+- No generated Unattend.xml file has been consumed by Windows Setup.
+- No generated bsdinstall config has been consumed by FreeBSD's installer.
+- No iPXE boot script has been loaded by actual iPXE firmware.
+- TFTP file serving (`tftp.py`) has **0% test coverage** and has never served a file to a real TFTP client.
+
+### Hardware testing coverage
+
+**Zero.** PxeOS has not been tested on any hardware -- no servers, no desktops, no Raspberry Pis, no VMs via QEMU/KVM or VirtualBox. The entire project is validated through unit tests with mocked I/O.
+
+### OS family maturity levels
+
+| OS Family | Template Coverage | Real Installer Testing | Honest Assessment |
+|-----------|------------------|----------------------|-------------------|
+| Fedora/RHEL (Kickstart) | 76% | None | Most likely to work -- Kickstart is well-documented and stable |
+| Debian (Preseed) | Good | None | Likely to work for basic installs |
+| Ubuntu (Autoinstall) | 70% | None | Format changed between 22.04 and 24.04; only one format tested |
+| SUSE (AutoYaST) | 63% | None | SLES vs openSUSE differences not fully covered |
+| Arch (archinstall) | Good | None | Rolling release means config format may drift |
+| FreeBSD (bsdinstall) | 72% | None | ZFS-on-root generated but unvalidated |
+| OpenBSD (autoinstall) | 76% | None | Simple format, reasonable confidence |
+| NetBSD (sysinst) | 69% | None | Least mature BSD autoinstall support upstream |
+| DragonFly BSD | 98% | None | Smallest user base; high coverage but no real users |
+| **Windows** | **64%** | **None** | **Least mature.** No driver injection, no WinPE customization, no product key management, no answer file schema validation. Requires WDS or custom iPXE chain-loading (untested path). |
+
+### Scalability
+
+- No load testing has been performed (zero concurrent PXE boot tests).
+- No testing with more than a handful of registered hosts.
+- No benchmarking of API response times under load.
+- No long-running stability testing.
+- State is stored in a flat JSON file (`state.json`) -- no database backend, no file locking, no concurrent-write safety.
+
+### Missing features compared to Cobbler
+
+PxeOS does not have several features that Cobbler (15+ years mature) provides:
+
+| Feature | Cobbler | PxeOS |
+|---------|---------|-------|
+| Built-in DHCP management | Yes (ISC DHCP / dnsmasq) | No -- requires external DHCP server |
+| Built-in DNS management | Yes (BIND) | No |
+| IPMI/BMC power management | Yes (power on/off/reboot) | Skeleton code only ([#29](https://github.com/FlossWare/PxeOS/issues/29)) |
+| Repository mirroring | Yes | No |
+| Configuration management integration | Yes (Puppet/Ansible) | No |
+| Cobbler migration tool | N/A | Planned but not implemented ([#30](https://github.com/FlossWare/PxeOS/issues/30)) |
+| Production deployments | Thousands | Zero |
+| Packaging | RPM, DEB, pip | pip only |
+| Community size | Small-medium | Single developer |
+
+### What IS NOT in CI
+
+The GitHub Actions pipeline runs unit tests on Python 3.9-3.12 and enforces 50% minimum coverage. It does **not** run:
+
+- Linting (ruff is configured but not enforced in CI)
+- Type checking (mypy is configured but not enforced in CI)
+- Security scanning (bandit is configured but not enforced in CI)
+- Integration tests, end-to-end tests, or performance benchmarks
+
+### Bottom line
+
+PxeOS is a well-structured prototype with broad OS family coverage and a clean plugin architecture. It is suitable for **experimentation, evaluation, and development contributions**. It is **not ready for production use** without end-to-end testing on real (or at least virtual) hardware. If you need a production PXE provisioning tool today, use [Cobbler](https://cobbler.github.io/), [Foreman](https://theforeman.org/), or [MAAS](https://maas.io/).
+
+For the full detailed assessment, see [Known Limitations](docs/KNOWN_LIMITATIONS.md) and [Comparison](docs/COMPARISON.md).
+
 ## Supported OS Families
 
 | OS Family | Autoinstall Mechanism | Config File |

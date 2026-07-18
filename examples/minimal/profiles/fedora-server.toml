@@ -1,0 +1,44 @@
+# Minimal Fedora 42 Server profile for PXE provisioning.
+#
+# This profile installs a basic Fedora Server with SSH access,
+# a handful of useful packages, and a post-install script that
+# disables PXE netboot so the machine boots from disk next time.
+#
+# Customize the install_url to point at your local mirror or the
+# public Fedora mirror closest to you.
+
+[profile]
+name = "fedora-server"
+os_family = "fedora"
+vendor = "fedora"
+os_version = "42"
+arch = "x86_64"
+firmware = "bios"
+
+# Point this at a Fedora 42 mirror (Everything or Server tree).
+# A local mirror is faster; the public URL works but is slow over PXE.
+install_url = "https://download.fedoraproject.org/pub/fedora/linux/releases/42/Server/x86_64/os/"
+
+# Packages installed on top of the minimal Fedora Server group.
+packages = [
+    "vim-enhanced",
+    "tmux",
+    "curl",
+    "openssh-server",
+]
+
+# Post-install scripts run as root during the Kickstart %post phase.
+# The first script disables PXE netboot so the machine boots
+# from local disk after installation completes.
+# Replace PXEOS_SERVER with your PxeOS server's IP or hostname.
+post_scripts = [
+    "curl -X POST http://PXEOS_SERVER:8443/api/v1/provision/aa:bb:cc:dd:ee:f1/disable-netboot || true",
+]
+
+[profile.network]
+method = "dhcp"
+device = "eth0"
+hostname = "fedora-server"
+
+[profile.disk]
+layout = "auto"

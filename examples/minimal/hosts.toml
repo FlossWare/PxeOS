@@ -1,0 +1,13 @@
+# Minimal host rules -- one machine mapped by MAC address.
+#
+# Replace the MAC address below with the actual MAC of the machine
+# you want to PXE-boot.  You can find it in the BIOS/UEFI settings
+# or by running `ip link` on an already-running system.
+
+[[host]]
+mac = "aa:bb:cc:dd:ee:f1"
+profile = "fedora-server"
+os_family = "fedora"
+vendor = "fedora"
+os_version = "42"
+priority = 10

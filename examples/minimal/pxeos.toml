@@ -1,0 +1,23 @@
+# Minimal PxeOS configuration for a single-distro lab setup.
+#
+# This config disables TLS and authentication for simplicity.
+# For production use, enable both -- see docs/DEPLOYMENT.md.
+
+[server]
+host = "0.0.0.0"
+port = 8443
+# tls_cert = "/etc/pxeos/tls/cert.pem"
+# tls_key = "/etc/pxeos/tls/key.pem"
+
+[paths]
+tftp_root = "/srv/tftp"
+distro_root = "/srv/pxeos/distros"
+data_dir = "/srv/pxeos"
+
+[auth]
+enabled = false
+
+[defaults]
+os = "fedora"
+version = "42"
+profile = "fedora-server"
