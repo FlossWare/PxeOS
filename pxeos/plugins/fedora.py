@@ -13,8 +13,8 @@ from pxeos.models import (
 )
 from pxeos.plugins.base import OSPlugin
 
-_FEDORA_VERSIONS = ["38", "39", "40", "41", "42"]
-_RHEL_VERSIONS = ["8", "9"]
+_FEDORA_VERSIONS = ["38", "39", "40", "41", "42", "43", "44"]
+_RHEL_VERSIONS = ["8", "9", "10"]
 
 _KERNEL_SUBPATH = Path("images/pxeboot/vmlinuz")
 _INITRD_SUBPATH = Path("images/pxeboot/initrd.img")

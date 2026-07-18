@@ -22,7 +22,7 @@ class FreeBSDPlugin(OSPlugin):
 
     @property
     def supported_versions(self) -> list[str]:
-        return ["13.3", "13.4", "14.0", "14.1", "14.2"]
+        return ["13.3", "13.4", "14.0", "14.1", "14.2", "15.0"]
 
     def autoinstall_filename(self) -> str:
         return "installerconfig"
@@ -55,7 +55,7 @@ class FreeBSDPlugin(OSPlugin):
         domain = network_cfg.get("domain", "local")
 
         root_password = profile.extra.get(
-            "root_password", "$6$rounds=4096$salt$hash"
+            "root_password", ""
         )
         timezone = profile.extra.get("timezone", "UTC")
         keymap = profile.extra.get("keymap", "us")

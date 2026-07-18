@@ -41,7 +41,7 @@ class OpenBSDPlugin(OSPlugin):
 
     @property
     def supported_versions(self) -> list[str]:
-        return ["7.4", "7.5", "7.6"]
+        return ["7.4", "7.5", "7.6", "7.7", "7.8"]
 
     def autoinstall_filename(self) -> str:
         return "install.conf"
@@ -69,8 +69,7 @@ class OpenBSDPlugin(OSPlugin):
         disk_layout = disk_cfg.get("layout", "whole")
 
         root_password = profile.extra.get(
-            "root_password",
-            "$2b$10$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "root_password", ""
         )
         timezone = profile.extra.get("timezone", "UTC")
         username = profile.extra.get("user", "")

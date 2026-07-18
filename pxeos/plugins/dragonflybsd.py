@@ -23,7 +23,7 @@ class DragonFlyBSDPlugin(OSPlugin):
 
     @property
     def supported_versions(self) -> list[str]:
-        return ["6.4", "6.2", "6.0"]
+        return ["6.0", "6.2", "6.4", "6.4.2"]
 
     def autoinstall_filename(self) -> str:
         return "installerconfig"
@@ -57,7 +57,7 @@ class DragonFlyBSDPlugin(OSPlugin):
         domain = network_cfg.get("domain", "local")
 
         root_password = profile.extra.get(
-            "root_password", "$6$rounds=4096$salt$hash"
+            "root_password", ""
         )
         timezone = profile.extra.get("timezone", "UTC")
         keymap = profile.extra.get("keymap", "us")

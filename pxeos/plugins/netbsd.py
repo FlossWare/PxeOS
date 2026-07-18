@@ -71,7 +71,7 @@ class NetBSDPlugin(OSPlugin):
         filesystem = disk_cfg.get("filesystem", "ffs")
 
         root_password = profile.extra.get(
-            "root_password", "$sha1$rounds=4096$salt$hash"
+            "root_password", ""
         )
         timezone = profile.extra.get("timezone", "UTC")
 

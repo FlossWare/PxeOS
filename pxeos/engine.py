@@ -190,9 +190,18 @@ class ProvisioningEngine:
         if profile.dhcp_options:
             lines.append("")
 
-        lines.append(f"kernel {assets.kernel}")
-        if assets.initrd:
-            lines.append(f"initrd {assets.initrd}")
+        kernel_url = assets.kernel
+        initrd_url = assets.initrd
+        if profile.install_url:
+            base = profile.install_url.rstrip("/")
+            if not kernel_url.startswith(("http://", "https://")):
+                kernel_url = f"{base}/{kernel_url.lstrip('/')}"
+            if initrd_url and not initrd_url.startswith(("http://", "https://")):
+                initrd_url = f"{base}/{initrd_url.lstrip('/')}"
+
+        lines.append(f"kernel {kernel_url}")
+        if initrd_url:
+            lines.append(f"initrd {initrd_url}")
 
         # Inject custom iPXE commands before boot, with
         # variable substitution.

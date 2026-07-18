@@ -40,8 +40,8 @@ OS_CONFIGS: Dict[str, Dict[str, Any]] = {
         "profile_name": "fedora-server",
         "install_url": "http://mirror.example.com/fedora/40/x86_64",
         "autoinstall_url": "http://pxe.example.com/ks/fedora-server",
-        "expected_kernel": "images/pxeboot/vmlinuz",
-        "expected_initrd": "images/pxeboot/initrd.img",
+        "expected_kernel": "http://mirror.example.com/fedora/40/x86_64/images/pxeboot/vmlinuz",
+        "expected_initrd": "http://mirror.example.com/fedora/40/x86_64/images/pxeboot/initrd.img",
         "autoinstall_markers": ["install", "rootpw", "network"],
     },
     "debian": {
@@ -49,8 +49,8 @@ OS_CONFIGS: Dict[str, Dict[str, Any]] = {
         "profile_name": "debian-server",
         "install_url": "http://mirror.example.com/debian/12",
         "autoinstall_url": "http://pxe.example.com/preseed/debian-server",
-        "expected_kernel": "install.amd/vmlinuz",
-        "expected_initrd": "install.amd/initrd.gz",
+        "expected_kernel": "http://mirror.example.com/debian/12/install.amd/vmlinuz",
+        "expected_initrd": "http://mirror.example.com/debian/12/install.amd/initrd.gz",
         "autoinstall_markers": ["d-i", "preseed"],
     },
     "ubuntu": {
@@ -58,8 +58,8 @@ OS_CONFIGS: Dict[str, Dict[str, Any]] = {
         "profile_name": "ubuntu-server",
         "install_url": "http://mirror.example.com/ubuntu/24.04",
         "autoinstall_url": "http://pxe.example.com/autoinstall/ubuntu-server",
-        "expected_kernel": "casper/vmlinuz",
-        "expected_initrd": "casper/initrd",
+        "expected_kernel": "http://mirror.example.com/ubuntu/24.04/casper/vmlinuz",
+        "expected_initrd": "http://mirror.example.com/ubuntu/24.04/casper/initrd",
         "autoinstall_markers": ["autoinstall"],
     },
 }
@@ -901,9 +901,9 @@ class TestMultiOS:
         resp_d = client.get(f"/api/v1/boot/{mac_debian}")
         resp_u = client.get(f"/api/v1/boot/{mac_ubuntu}")
 
-        assert "initrd images/pxeboot/initrd.img" in resp_f.text
-        assert "initrd install.amd/initrd.gz" in resp_d.text
-        assert "initrd casper/initrd" in resp_u.text
+        assert "initrd http://mirror.example.com/fedora/40/x86_64/images/pxeboot/initrd.img" in resp_f.text
+        assert "initrd http://mirror.example.com/debian/12/install.amd/initrd.gz" in resp_d.text
+        assert "initrd http://mirror.example.com/ubuntu/24.04/casper/initrd" in resp_u.text
 
 
 # ===========================================================================

@@ -63,7 +63,7 @@ class WindowsPlugin(OSPlugin):
 
         product_key = profile.extra.get("product_key", "")
         admin_password = profile.extra.get(
-            "admin_password", "P@ssw0rd!"
+            "admin_password", ""
         )
         timezone_win = profile.extra.get(
             "timezone", "UTC"

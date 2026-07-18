@@ -442,10 +442,10 @@ class TestAutoLogon:
         output = plugin.generate_autoinstall(profile)
         assert "Test!Pass123" in output
 
-    def test_default_admin_password(self, plugin: WindowsPlugin) -> None:
+    def test_default_admin_password_is_empty(self, plugin: WindowsPlugin) -> None:
         profile = _make_profile()
         output = plugin.generate_autoinstall(profile)
-        assert "P@ssw0rd!" in output
+        assert "P@ssw0rd!" not in output
 
 
 # ═══════════════════════════════════════════════════════════════════
