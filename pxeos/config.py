@@ -197,6 +197,8 @@ def load_hosts(path: Path) -> List[HostRule]:
                 bmc_password=entry.get("bmc_password"),
                 bmc_driver=entry.get("bmc_driver"),
                 deploy_mode=entry.get("deploy_mode", "pxe"),
+                console_type=entry.get("console_type"),
+                console_endpoint=entry.get("console_endpoint"),
             )
         )
     return rules

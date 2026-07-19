@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Form, File, Request, UploadFile
+from fastapi import APIRouter, Form, File, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from jinja2 import Environment, PackageLoader
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/web", tags=["web"])
 
@@ -76,6 +80,46 @@ def _list_power_hosts() -> List[Dict[str, Any]]:
         for r in rules
         if r.mac and r.bmc_host and r.bmc_driver
     ]
+
+
+def _get_console_config(mac: str):
+    """Look up ConsoleConfig for a host by MAC address.
+
+    Returns None if the host is not found or has no console configured.
+    """
+    config = _get_config()
+    if not config:
+        return None
+    from pxeos.config import load_hosts as _load_hosts
+    hosts_file = config.data_dir / "hosts.toml"
+    if not hosts_file.exists():
+        return None
+    rules = _load_hosts(hosts_file)
+    for r in rules:
+        if r.mac and r.mac.lower() == mac.lower():
+            if r.console_type and r.console_endpoint:
+                from pxeos.console import ConsoleConfig
+                return ConsoleConfig.from_host_rule(
+                    r.console_type, r.console_endpoint,
+                )
+    return None
+
+
+def _console_macs() -> set:
+    """Return set of MACs that have console configured."""
+    config = _get_config()
+    if not config:
+        return set()
+    from pxeos.config import load_hosts as _load_hosts
+    hosts_file = config.data_dir / "hosts.toml"
+    if not hosts_file.exists():
+        return set()
+    rules = _load_hosts(hosts_file)
+    return {
+        r.mac.lower()
+        for r in rules
+        if r.mac and r.console_type and r.console_endpoint
+    }
 
 
 def _web_named_store():
@@ -672,6 +716,7 @@ def provisions_page():
         "provisions.html",
         page="provisions",
         provisions=_list_provisions(),
+        console_macs=_console_macs(),
     )
 
 
@@ -679,7 +724,7 @@ def provisions_page():
 def provisions_table():
     provisions = _list_provisions()
     tmpl = _templates.get_template("provisions_table.html")
-    html = tmpl.render(provisions=provisions)
+    html = tmpl.render(provisions=provisions, console_macs=_console_macs())
     return HTMLResponse(html)
 
 
@@ -739,6 +784,95 @@ def web_enable_netboot(mac: str):
     provisions = _list_provisions()
     tmpl = _templates.get_template("provisions_table.html")
     return HTMLResponse(tmpl.render(provisions=provisions))
+
+
+# ------- Console Viewer -------
+
+
+@router.get("/console/{mac}", response_class=HTMLResponse)
+def console_page(mac: str):
+    console_cfg = _get_console_config(mac)
+    if not console_cfg:
+        return _render(
+            "provisions.html",
+            page="provisions",
+            provisions=_list_provisions(),
+            console_macs=_console_macs(),
+            flash={"type": "error", "message": f"No console configured for {mac}"},
+        )
+    return _render(
+        "console.html",
+        page="provisions",
+        mac=mac,
+        console_type=console_cfg.console_type.value,
+        console_host=console_cfg.host,
+        console_port=console_cfg.port,
+    )
+
+
+@router.websocket("/ws/console/{mac}")
+async def console_websocket(websocket: WebSocket, mac: str):
+    console_cfg = _get_console_config(mac)
+    if not console_cfg:
+        await websocket.close(code=4004, reason="No console configured")
+        return
+
+    await websocket.accept()
+
+    from pxeos.console import ConsoleType, ConsoleProxy, SerialConsoleProxy
+
+    if console_cfg.console_type in (ConsoleType.VNC, ConsoleType.SPICE):
+        proxy = ConsoleProxy(console_cfg)
+    else:
+        proxy = SerialConsoleProxy(console_cfg)
+
+    try:
+        await proxy.connect()
+    except (OSError, ConnectionRefusedError) as exc:
+        logger.warning("Console connection failed for %s: %s", mac, exc)
+        try:
+            await websocket.send_json({"error": f"Connection failed: {exc}"})
+        except Exception:
+            pass
+        await websocket.close(code=4002, reason="Backend connection failed")
+        return
+
+    async def ws_to_backend():
+        try:
+            while True:
+                data = await websocket.receive_bytes()
+                await proxy.send_to_backend(data)
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+
+    async def backend_to_ws():
+        try:
+            while True:
+                data = await proxy.receive_from_backend()
+                if not data:
+                    break
+                await websocket.send_bytes(data)
+        except Exception:
+            pass
+
+    try:
+        done, pending = await asyncio.wait(
+            [
+                asyncio.create_task(ws_to_backend()),
+                asyncio.create_task(backend_to_ws()),
+            ],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+    finally:
+        await proxy.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 # ------- Power Management -------
