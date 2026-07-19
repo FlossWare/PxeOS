@@ -52,6 +52,7 @@ class AuditEvent:
     NETBOOT_CHANGE = "netboot_change"
     PROVISION_COMPLETE = "provision_complete"
     PROVISION_FAILED = "provision_failed"
+    WEBHOOK_DELIVERY = "webhook_delivery"
 
 
 def _make_entry(
@@ -265,6 +266,29 @@ class AuditLogger:
         if role:
             details["role"] = role
         return self.log(event, details, client_ip)
+
+    def log_webhook_delivery(
+        self,
+        delivery_id: str,
+        webhook_url: str,
+        event: str,
+        success: bool,
+        attempts: int,
+        status_code: Optional[int] = None,
+        error: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        details: Dict[str, Any] = {
+            "delivery_id": delivery_id,
+            "webhook_url": webhook_url,
+            "event": event,
+            "success": success,
+            "attempts": attempts,
+        }
+        if status_code is not None:
+            details["status_code"] = status_code
+        if error:
+            details["error"] = error
+        return self.log(AuditEvent.WEBHOOK_DELIVERY, details)
 
     def log_netboot_change(
         self,
