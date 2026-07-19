@@ -156,6 +156,23 @@
         </OSImage>
       </ImageInstall>
     </component>
+
+    {% if driver_paths %}
+    <!-- Driver injection for WinPE (VirtIO, storage, NIC) -->
+    <component name="Microsoft-Windows-PnpCustomizationsWinPE"
+               processorArchitecture="{{ profile.arch | default('amd64') }}"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <DriverPaths>
+        {% for dp in driver_paths %}
+        <PathAndCredentials wcm:action="add" wcm:keyValue="{{ loop.index }}">
+          <Path>{{ dp }}</Path>
+        </PathAndCredentials>
+        {% endfor %}
+      </DriverPaths>
+    </component>
+    {% endif %}
   </settings>
 
   <!-- ======================== -->
@@ -281,7 +298,7 @@
         </AdministratorPassword>
       </UserAccounts>
 
-      {% if post_scripts %}
+      {% if post_scripts or setup_complete %}
       <FirstLogonCommands>
         {% for script in post_scripts %}
         <SynchronousCommand wcm:action="add">
@@ -291,6 +308,14 @@
           <RequiresUserInput>false</RequiresUserInput>
         </SynchronousCommand>
         {% endfor %}
+        {% if setup_complete %}
+        <SynchronousCommand wcm:action="add">
+          <Order>{{ (post_scripts | length) + 1 }}</Order>
+          <CommandLine>cmd /c {{ setup_complete }}</CommandLine>
+          <Description>SetupComplete script</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+        {% endif %}
       </FirstLogonCommands>
       {% endif %}
 
