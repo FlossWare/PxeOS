@@ -1,0 +1,17 @@
+---
+namespace: flossware
+name: pxeos
+version: 1.0.0
+readme: README.md
+authors:
+  - FlossWare
+description: Ansible collection for managing PxeOS PXE boot provisioning
+license:
+  - GPL-3.0-or-later
+repository: https://github.com/FlossWare/PxeOS
+documentation: https://github.com/FlossWare/PxeOS
+homepage: https://github.com/FlossWare/PxeOS
+issues: https://github.com/FlossWare/PxeOS/issues
+build_ignore:
+  - "*.pyc"
+  - __pycache__
