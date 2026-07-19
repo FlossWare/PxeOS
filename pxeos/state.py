@@ -5,7 +5,10 @@ from __future__ import annotations
 import enum
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from pxeos.db import StorageBackend
 
 
 class ProvisionState(enum.Enum):
@@ -52,13 +55,27 @@ class ProvisionRecord:
 
 
 class ProvisionTracker:
-    """In-memory provisioning state tracker with callbacks."""
+    """Provisioning state tracker with callbacks and optional persistence.
 
-    def __init__(self) -> None:
+    When constructed without a *backend*, records are kept purely
+    in memory (the original behaviour).  Pass a
+    :class:`~pxeos.db.StorageBackend` to persist every state change
+    to SQLite, JSON, or any other implementation.
+    """
+
+    def __init__(
+        self,
+        backend: Optional[StorageBackend] = None,
+    ) -> None:
+        self._backend = backend
         self._records: Dict[str, ProvisionRecord] = {}  # keyed by MAC
         self._callbacks: Dict[ProvisionState, List[Callable]] = {
             s: [] for s in ProvisionState
         }
+        # Pre-load from backend so in-memory cache stays consistent
+        if self._backend is not None:
+            for rec in self._backend.list_all():
+                self._records[rec.mac.lower()] = rec
 
     def register(
         self,
@@ -79,6 +96,8 @@ class ProvisionTracker:
             history=[(ProvisionState.REGISTERED, now)],
         )
         self._records[mac.lower()] = record
+        if self._backend is not None:
+            self._backend.save(record)
         self._fire_callbacks(ProvisionState.REGISTERED, record)
         return record
 
@@ -100,6 +119,8 @@ class ProvisionTracker:
             record.completed_at = now
         if error_message:
             record.error_message = error_message
+        if self._backend is not None:
+            self._backend.save(record)
         self._fire_callbacks(new_state, record)
         return record
 
@@ -133,6 +154,8 @@ class ProvisionTracker:
         if record is None:
             raise ValueError(f"No provisioning record for {mac}")
         record.netboot_enabled = False
+        if self._backend is not None:
+            self._backend.save(record)
         return record
 
     def enable_netboot(self, mac: str) -> ProvisionRecord:
@@ -141,11 +164,15 @@ class ProvisionTracker:
         if record is None:
             raise ValueError(f"No provisioning record for {mac}")
         record.netboot_enabled = True
+        if self._backend is not None:
+            self._backend.save(record)
         return record
 
     def clear(self) -> None:
         """Remove all provisioning records."""
         self._records.clear()
+        if self._backend is not None:
+            self._backend.clear()
 
     def _fire_callbacks(
         self, state: ProvisionState, record: ProvisionRecord

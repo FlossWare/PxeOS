@@ -91,6 +91,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_image_parser(sub)
     _add_service_parser(sub)
     _add_mirror_parser(sub)
+    _add_migrate_state_parser(sub)
 
     return parser
 
@@ -2191,6 +2192,8 @@ def _dispatch(
         return _cmd_service(args, config)
     elif args.command == "mirror":
         return _cmd_mirror(args, config)
+    elif args.command == "migrate-state":
+        return _cmd_migrate_state(args, config)
 
     return 1
 
@@ -2337,6 +2340,54 @@ def _cmd_mirror(
         "usage: pxeos mirror {add|remove|sync|list|status}"
     )
     return 1
+
+
+def _add_migrate_state_parser(
+    sub: argparse._SubParsersAction,
+) -> None:
+    ms = sub.add_parser(
+        "migrate-state",
+        help="migrate state.json to SQLite database",
+    )
+    ms.add_argument(
+        "--state-file",
+        type=Path,
+        default=None,
+        help="path to state.json (default: <data_dir>/state.json)",
+    )
+    ms.add_argument(
+        "--db-file",
+        type=Path,
+        default=None,
+        help="path to SQLite database (default: <data_dir>/state.db)",
+    )
+
+
+def _cmd_migrate_state(
+    args: argparse.Namespace,
+    config: PxeOSConfig,
+) -> int:
+    """Migrate provisioning state from JSON to SQLite."""
+    from pxeos.db import migrate_json_to_sqlite
+
+    state_file = args.state_file or (config.data_dir / "state.json")
+    db_file = args.db_file or (config.data_dir / "state.db")
+
+    if not state_file.exists():
+        print(
+            f"error: state file not found: {state_file}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        count = migrate_json_to_sqlite(state_file, db_file)
+    except (ValueError, json.JSONDecodeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"migrated {count} records from {state_file} to {db_file}")
+    return 0
 
 
 def _add_auth_parser(
