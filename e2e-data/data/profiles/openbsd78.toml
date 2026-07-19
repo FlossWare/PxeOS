@@ -1,0 +1,21 @@
+[profile]
+name = "openbsd78"
+os_family = "openbsd"
+vendor = "openbsd"
+os_version = "7.8"
+arch = "amd64"
+firmware = "bios"
+install_url = "http://192.168.200.1:8880/distros/openbsd/7.8/x86_64/"
+
+packages = []
+
+post_scripts = []
+
+[profile.network]
+interface = "em0"
+dhcp = true
+hostname = "openbsd78-e2e"
+
+[profile.disk]
+device = "sd0"
+layout = "whole"

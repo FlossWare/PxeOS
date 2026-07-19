@@ -1,0 +1,22 @@
+[profile]
+name = "rocky101-server"
+os_family = "fedora"
+vendor = "rocky"
+os_version = "10"
+arch = "x86_64"
+firmware = "bios"
+install_url = "http://192.168.200.1:8880/distros/rocky/10.1/x86_64/"
+
+packages = ["vim-enhanced", "tmux", "curl", "openssh-server"]
+
+post_scripts = [
+    "curl -X POST http://192.168.200.1:8880/api/v1/provision/52:54:00:e2:e0:02/disable-netboot || true",
+]
+
+[profile.network]
+method = "dhcp"
+device = "eth0"
+hostname = "rocky101-e2e"
+
+[profile.disk]
+layout = "auto"

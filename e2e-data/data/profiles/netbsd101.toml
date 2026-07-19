@@ -1,0 +1,22 @@
+[profile]
+name = "netbsd101"
+os_family = "netbsd"
+vendor = "netbsd"
+os_version = "10.1"
+arch = "amd64"
+firmware = "bios"
+install_url = "http://192.168.200.1:8880/distros/netbsd/10.1/x86_64/"
+
+packages = []
+
+post_scripts = []
+
+[profile.network]
+interface = "wm0"
+dhcp = true
+hostname = "netbsd101-e2e"
+
+[profile.disk]
+device = "wd0"
+layout = "default"
+filesystem = "ffs"

@@ -1,0 +1,18 @@
+[server]
+host = "192.168.200.1"
+port = 8880
+
+[paths]
+data_dir = "/home/sfloess/Development/github/FlossWare/PxeOS/e2e-data/data"
+distro_root = "/home/sfloess/Development/github/FlossWare/PxeOS/e2e-data/distros"
+tftp_root = "/home/sfloess/Development/github/FlossWare/PxeOS/e2e-data/tftp"
+
+[tls]
+auto_generate = false
+
+[auth]
+enabled = false
+
+[logging]
+level = "DEBUG"
+json_format = false
