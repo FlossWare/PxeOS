@@ -234,11 +234,11 @@ class TestPxeBootLifecycle:
     def test_boot_script_has_autoinstall_reference(self, tmp_path, os_family):
         mac = _make_mac(5)
         client = _setup_environment(tmp_path, [os_family], {mac: os_family})
+        cfg = OS_CONFIGS[os_family]
 
         resp = client.get(f"/api/v1/boot/{mac}")
         assert resp.status_code == 200
-        # All OS families include an autoinstall URL reference via inst.ks=
-        assert "inst.ks=" in resp.text
+        assert cfg["autoinstall_url"] in resp.text
 
     def test_autoinstall_returns_os_specific_content(self, tmp_path, os_family):
         mac = _make_mac(6)

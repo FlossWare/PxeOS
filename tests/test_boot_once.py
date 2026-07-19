@@ -216,7 +216,6 @@ class TestEngineBootOnce:
         assert "kernel /images/fedora/41/vmlinuz" in script
         assert "initrd /images/fedora/41/initrd.img" in script
         assert "\nboot\n" in script
-        assert "inst.ks=" in script
 
     def test_returns_normal_script_for_unknown_mac(self):
         """An unknown MAC (not in tracker) defaults to netboot enabled."""

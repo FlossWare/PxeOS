@@ -167,6 +167,12 @@ class ProvisioningEngine:
         plugin = self._registry.get(rule.os_family)
         is_live = profile.extra.get("live", False)
 
+        if not is_live and not profile.autoinstall_url:
+            base_url = self._base_url()
+            profile.autoinstall_url = (
+                f"{base_url}/api/v1/autoinstall/{mac}"
+            )
+
         if is_live and plugin.supports_live:
             assets = plugin.live_boot_assets(profile)
         else:
@@ -204,12 +210,6 @@ class ProvisioningEngine:
                 initrd_url = f"{base}/{initrd_url.lstrip('/')}"
 
         args = list(assets.boot_args)
-        if not is_live:
-            base_url = self._base_url()
-            autoinstall_url = (
-                f"{base_url}/api/v1/autoinstall/{mac}"
-            )
-            args.append(f"inst.ks={autoinstall_url}")
 
         kernel_line = f"kernel {kernel_url}"
         if args:

@@ -118,7 +118,7 @@ class TestRenderIpxeScript:
         assets = _boot_assets(
             kernel="/images/fedora/41/vmlinuz",
             initrd="/images/fedora/41/initrd.img",
-            boot_args=("ip=dhcp", "rd.live.image"),
+            boot_args=("inst.ks=http://127.0.0.1:8443/api/v1/autoinstall/aa:bb:cc:dd:ee:ff", "ip=dhcp"),
         )
 
         plugin = MagicMock()
