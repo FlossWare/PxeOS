@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from pxeos.audit import get_audit_logger
 from pxeos.cache import (
     TTLCacheWrapper,
     profile_cache_key,
@@ -178,6 +179,9 @@ class ProvisioningEngine:
             "Boot script generated mac=%s profile=%s os=%s/%s",
             mac, rule.profile, rule.os_family, rule.os_version,
         )
+        get_audit_logger().log_boot_request(
+            mac=mac, profile=rule.profile,
+        )
 
         lines = [
             "#!ipxe",
@@ -268,6 +272,9 @@ class ProvisioningEngine:
         logger.info(
             "Autoinstall requested mac=%s state=installing",
             mac,
+        )
+        get_audit_logger().log_autoinstall_fetch(
+            mac=mac, profile=rule.profile,
         )
 
         content = plugin.generate_autoinstall(profile)

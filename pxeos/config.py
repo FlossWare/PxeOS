@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
+from pxeos.audit import AuditConfig
 from pxeos.logging_config import LoggingConfig
 from pxeos.models import BootFirmware, HostRule, ProvisionProfile
 
@@ -59,6 +60,9 @@ class PxeOSConfig:
     logging: LoggingConfig = field(
         default_factory=LoggingConfig
     )
+    audit: AuditConfig = field(
+        default_factory=AuditConfig
+    )
 
 
 def load_config(path: Path) -> PxeOSConfig:
@@ -80,6 +84,7 @@ def load_config(path: Path) -> PxeOSConfig:
     discovery = data.get("discovery", {})
     rl = data.get("rate_limit", {})
     log = data.get("logging", {})
+    audit_data = data.get("audit", {})
 
     tls_cert = server.get("tls_cert")
     tls_key = server.get("tls_key")
@@ -112,6 +117,32 @@ def load_config(path: Path) -> PxeOSConfig:
         journald_enabled=log.get("journald_enabled", False),
     )
 
+    audit_log_file_raw = audit_data.get("log_file")
+    audit_config = AuditConfig(
+        enabled=audit_data.get("enabled", True),
+        log_file=(
+            Path(audit_log_file_raw)
+            if audit_log_file_raw
+            else None
+        ),
+        max_bytes=int(
+            audit_data.get("max_bytes", 52_428_800)
+        ),
+        backup_count=int(
+            audit_data.get("backup_count", 10)
+        ),
+        log_to_stdout=audit_data.get("log_to_stdout", False),
+        buffer_size=int(
+            audit_data.get("buffer_size", 1000)
+        ),
+        syslog_enabled=audit_data.get(
+            "syslog_enabled", False
+        ),
+        syslog_address=audit_data.get(
+            "syslog_address", "/dev/log"
+        ),
+    )
+
     return PxeOSConfig(
         server_host=server.get("host", "0.0.0.0"),
         server_port=server.get("port", 8443),
@@ -127,6 +158,7 @@ def load_config(path: Path) -> PxeOSConfig:
         enable_discovery=discovery.get("enabled", False),
         rate_limit=rate_limit,
         logging=logging_config,
+        audit=audit_config,
     )
 
 
