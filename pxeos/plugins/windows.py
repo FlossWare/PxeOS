@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import shutil
+import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Optional
 
 from pxeos.models import (
     BootAssets,
@@ -24,6 +26,40 @@ _VERSION_NAMES = {
 
 # Server versions use Server Core / Desktop Experience.
 _SERVER_VERSIONS = {"2019", "2022", "2025"}
+
+# Microsoft unattend namespace
+_UNATTEND_NS = "urn:schemas-microsoft-com:unattend"
+_WCM_NS = (
+    "http://schemas.microsoft.com/WMIConfig/2002/State"
+)
+
+# Valid configuration pass names per Microsoft docs
+_VALID_PASSES = frozenset({
+    "windowsPE",
+    "offlineServicing",
+    "generalize",
+    "specialize",
+    "auditSystem",
+    "auditUser",
+    "oobeSystem",
+})
+
+# Known Windows Setup component names (subset used by PxeOS)
+_KNOWN_COMPONENTS = frozenset({
+    "Microsoft-Windows-International-Core-WinPE",
+    "Microsoft-Windows-International-Core",
+    "Microsoft-Windows-Setup",
+    "Microsoft-Windows-Shell-Setup",
+    "Microsoft-Windows-TCPIP",
+    "Microsoft-Windows-DNS-Client",
+    "Microsoft-Windows-UnattendedJoin",
+    "Microsoft-Windows-PnpCustomizationsWinPE",
+    "Microsoft-Windows-PnpCustomizationsNonWinPE",
+    "Microsoft-Windows-Deployment",
+})
+
+# Required elements in a valid unattend.xml
+_REQUIRED_PASSES = {"windowsPE", "oobeSystem"}
 
 
 class WindowsPlugin(OSPlugin):
@@ -101,6 +137,21 @@ class WindowsPlugin(OSPlugin):
             f"Windows {profile.os_version}",
         )
 
+        # Driver injection paths
+        driver_paths: list[str] = profile.extra.get(
+            "driver_paths", []
+        )
+
+        # SetupComplete.cmd script content
+        setup_complete: str = profile.extra.get(
+            "setup_complete", ""
+        )
+
+        # WinPE extra commands (startnet.cmd additions)
+        winpe_commands: list[str] = profile.extra.get(
+            "winpe_commands", []
+        )
+
         context = {
             "profile": profile,
             "hostname": hostname,
@@ -125,6 +176,9 @@ class WindowsPlugin(OSPlugin):
             "version_name": version_name,
             "packages": profile.packages,
             "post_scripts": profile.post_scripts,
+            "driver_paths": driver_paths,
+            "setup_complete": setup_complete,
+            "winpe_commands": winpe_commands,
         }
         self._sanitize_context(context)
         return self._render_template(
@@ -136,9 +190,19 @@ class WindowsPlugin(OSPlugin):
     ) -> BootAssets:
         base = profile.install_url.rstrip("/")
 
+        # Build WinPE boot arguments
+        boot_args_list: list[str] = []
+
+        # Add custom WinPE boot arguments from profile
+        winpe_boot_args: list[str] = profile.extra.get(
+            "winpe_boot_args", []
+        )
+        boot_args_list.extend(winpe_boot_args)
+
+        boot_args = tuple(boot_args_list)
+
         if profile.firmware == BootFirmware.UEFI:
             kernel = f"{base}/boot/bootmgfw.efi"
-            boot_args = ()
             config = (
                 "# Windows UEFI PXE boot\n"
                 "# bootmgfw.efi loads BCD and "
@@ -150,7 +214,6 @@ class WindowsPlugin(OSPlugin):
             )
         else:
             kernel = f"{base}/boot/pxeboot.n12"
-            boot_args = ()
             config = (
                 "# Windows BIOS PXE boot\n"
                 "# pxeboot.n12 loads bootmgr.exe and "
@@ -195,6 +258,162 @@ class WindowsPlugin(OSPlugin):
                 errors.append(
                     "product_key must be in "
                     "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX format"
+                )
+
+        # Validate driver paths
+        driver_paths = profile.extra.get(
+            "driver_paths", []
+        )
+        if not isinstance(driver_paths, list):
+            errors.append(
+                "driver_paths must be a list of "
+                "path strings"
+            )
+        else:
+            for i, dp in enumerate(driver_paths):
+                if not isinstance(dp, str) or not dp.strip():
+                    errors.append(
+                        f"driver_paths[{i}] must be a "
+                        f"non-empty string"
+                    )
+
+        # Validate winpe_boot_args
+        winpe_boot_args = profile.extra.get(
+            "winpe_boot_args", []
+        )
+        if not isinstance(winpe_boot_args, list):
+            errors.append(
+                "winpe_boot_args must be a list of "
+                "strings"
+            )
+
+        # Validate setup_complete (must be a string
+        # if provided)
+        setup_complete = profile.extra.get(
+            "setup_complete", ""
+        )
+        if not isinstance(setup_complete, str):
+            errors.append(
+                "setup_complete must be a string "
+                "(path to SetupComplete script)"
+            )
+
+        return errors
+
+    def validate_unattend_schema(
+        self, xml_content: str
+    ) -> list[str]:
+        """Validate unattend.xml structure against
+        the Microsoft schema conventions.
+
+        Checks:
+        - Well-formed XML
+        - Correct root element and namespace
+        - Valid configuration pass names
+        - Known component names
+        - Required passes present (windowsPE, oobeSystem)
+        - Component structure (processorArchitecture attr)
+
+        Returns a list of validation error strings.
+        An empty list means the XML is valid.
+        """
+        errors: list[str] = []
+
+        # 1. Parse XML (disable external entities
+        # to prevent XXE attacks if fed untrusted input)
+        try:
+            parser = ET.XMLParser()
+            # Attempt to disable entity resolution
+            # for defense-in-depth (Python 3.8+)
+            try:
+                parser.parser.UseForeignDTD(False)
+            except AttributeError:
+                pass
+            root = ET.fromstring(xml_content, parser)
+        except ET.ParseError as exc:
+            errors.append(f"XML parse error: {exc}")
+            return errors
+
+        # 2. Check root element
+        expected_tag = f"{{{_UNATTEND_NS}}}unattend"
+        if root.tag != expected_tag:
+            errors.append(
+                f"root element must be "
+                f"'{{{_UNATTEND_NS}}}unattend', "
+                f"got '{root.tag}'"
+            )
+            return errors
+
+        # 3. Check settings passes
+        ns = {"u": _UNATTEND_NS}
+        settings_elements = root.findall(
+            "u:settings", ns
+        )
+
+        if not settings_elements:
+            errors.append(
+                "no <settings> elements found"
+            )
+            return errors
+
+        found_passes: set[str] = set()
+        for settings in settings_elements:
+            pass_name = settings.get("pass", "")
+            if not pass_name:
+                errors.append(
+                    "<settings> element missing "
+                    "'pass' attribute"
+                )
+                continue
+
+            if pass_name not in _VALID_PASSES:
+                errors.append(
+                    f"invalid pass name "
+                    f"'{pass_name}'; valid passes: "
+                    f"{sorted(_VALID_PASSES)}"
+                )
+            else:
+                found_passes.add(pass_name)
+
+            # 4. Check components within each pass
+            components = settings.findall(
+                "u:component", ns
+            )
+            for comp in components:
+                comp_name = comp.get("name", "")
+                if not comp_name:
+                    errors.append(
+                        f"<component> in pass "
+                        f"'{pass_name}' missing "
+                        f"'name' attribute"
+                    )
+                    continue
+
+                if comp_name not in _KNOWN_COMPONENTS:
+                    errors.append(
+                        f"unknown component "
+                        f"'{comp_name}' in pass "
+                        f"'{pass_name}'"
+                    )
+
+                # Check processorArchitecture attribute
+                proc_arch = comp.get(
+                    "processorArchitecture", ""
+                )
+                if not proc_arch:
+                    errors.append(
+                        f"component '{comp_name}' in "
+                        f"pass '{pass_name}' missing "
+                        f"'processorArchitecture' "
+                        f"attribute"
+                    )
+
+        # 5. Check required passes
+        for req_pass in _REQUIRED_PASSES:
+            if req_pass not in found_passes:
+                errors.append(
+                    f"required pass '{req_pass}' "
+                    f"not found"
                 )
 
         return errors
