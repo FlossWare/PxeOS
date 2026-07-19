@@ -108,6 +108,24 @@ def _add_server_parser(
     start.add_argument(
         "--port", type=int, default=None, help="bind port"
     )
+    start.add_argument(
+        "--tls-cert",
+        type=Path,
+        default=None,
+        help="path to TLS certificate PEM file",
+    )
+    start.add_argument(
+        "--tls-key",
+        type=Path,
+        default=None,
+        help="path to TLS private key PEM file",
+    )
+    start.add_argument(
+        "--no-tls",
+        action="store_true",
+        default=False,
+        help="disable TLS (serve over plain HTTP)",
+    )
 
     srv_sub.add_parser("status", help="show server status")
 
@@ -477,9 +495,67 @@ def _cmd_server(
     registry: PluginRegistry,
     matcher: HostMatcher,
 ) -> int:
+    import logging as _logging
+
+    _logger = _logging.getLogger("pxeos.cli")
+
     if args.server_action == "start":
         host = args.host or config.server_host
         port = args.port or config.server_port
+
+        # Resolve TLS settings: CLI flags override config
+        no_tls = getattr(args, "no_tls", False)
+        cli_cert = getattr(args, "tls_cert", None)
+        cli_key = getattr(args, "tls_key", None)
+
+        tls_cert = cli_cert or config.tls_cert
+        tls_key = cli_key or config.tls_key
+
+        ssl_certfile = None
+        ssl_keyfile = None
+
+        if no_tls:
+            _logger.warning(
+                "TLS disabled: autoinstall configs (which may "
+                "contain password hashes and SSH keys) will be "
+                "served over plain HTTP"
+            )
+        elif tls_cert and tls_key:
+            ssl_certfile = str(tls_cert)
+            ssl_keyfile = str(tls_key)
+            _logger.info(
+                "TLS enabled with certificate: %s", tls_cert
+            )
+        elif config.tls_auto_generate:
+            try:
+                from pxeos.tls import ensure_tls_certs
+
+                cert, key = ensure_tls_certs(
+                    cert_path=tls_cert,
+                    key_path=tls_key,
+                    data_dir=config.data_dir,
+                )
+                ssl_certfile = str(cert)
+                ssl_keyfile = str(key)
+                _logger.info(
+                    "TLS enabled with auto-generated "
+                    "self-signed certificate: %s",
+                    cert,
+                )
+            except (ImportError, OSError) as exc:
+                _logger.warning(
+                    "could not auto-generate TLS certificate "
+                    "(%s); falling back to plain HTTP -- "
+                    "autoinstall configs will be served "
+                    "without encryption",
+                    exc,
+                )
+        else:
+            _logger.warning(
+                "TLS disabled: autoinstall configs (which may "
+                "contain password hashes and SSH keys) will be "
+                "served over plain HTTP"
+            )
 
         try:
             import uvicorn
@@ -491,16 +567,8 @@ def _cmd_server(
                 "pxeos.api:app",
                 host=host,
                 port=port,
-                ssl_certfile=(
-                    str(config.tls_cert)
-                    if config.tls_cert
-                    else None
-                ),
-                ssl_keyfile=(
-                    str(config.tls_key)
-                    if config.tls_key
-                    else None
-                ),
+                ssl_certfile=ssl_certfile,
+                ssl_keyfile=ssl_keyfile,
             )
         except KeyboardInterrupt:
             pass

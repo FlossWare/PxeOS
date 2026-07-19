@@ -41,6 +41,7 @@ class PxeOSConfig:
     server_port: int = 8443
     tls_cert: Optional[Path] = None
     tls_key: Optional[Path] = None
+    tls_auto_generate: bool = True
     tftp_root: Path = field(
         default_factory=lambda: Path("/srv/tftp")
     )
@@ -80,9 +81,12 @@ def load_config(path: Path) -> PxeOSConfig:
     discovery = data.get("discovery", {})
     rl = data.get("rate_limit", {})
     log = data.get("logging", {})
+    tls_section = data.get("tls", {})
 
-    tls_cert = server.get("tls_cert")
-    tls_key = server.get("tls_key")
+    # [tls] section takes precedence; fall back to server.tls_*
+    tls_cert = tls_section.get("cert") or server.get("tls_cert")
+    tls_key = tls_section.get("key") or server.get("tls_key")
+    tls_auto_generate = tls_section.get("auto_generate", True)
 
     rate_limit = RateLimitSettings(
         enabled=rl.get("enabled", False),
@@ -117,6 +121,7 @@ def load_config(path: Path) -> PxeOSConfig:
         server_port=server.get("port", 8443),
         tls_cert=Path(tls_cert) if tls_cert else None,
         tls_key=Path(tls_key) if tls_key else None,
+        tls_auto_generate=tls_auto_generate,
         tftp_root=Path(paths.get("tftp_root", "/srv/tftp")),
         distro_root=Path(
             paths.get("distro_root", "/srv/pxeos/distros")
