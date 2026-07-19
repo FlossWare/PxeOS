@@ -21,6 +21,18 @@ else:
 
 
 @dataclass
+class DatabaseConfig:
+    """Database backend configuration.
+
+    Supports ``sqlite`` (default), ``postgresql``, and ``mariadb``.
+    The *url* is a SQLAlchemy connection string.
+    """
+
+    backend: str = "sqlite"
+    url: str = "sqlite:///pxeos.db"
+
+
+@dataclass
 class RateLimitSettings:
     """Rate-limiting configuration (disabled by default)."""
 
@@ -64,6 +76,9 @@ class PxeOSConfig:
     audit: AuditConfig = field(
         default_factory=AuditConfig
     )
+    database: DatabaseConfig = field(
+        default_factory=DatabaseConfig
+    )
 
 
 def load_config(path: Path) -> PxeOSConfig:
@@ -87,6 +102,7 @@ def load_config(path: Path) -> PxeOSConfig:
     log = data.get("logging", {})
     audit_data = data.get("audit", {})
     tls_section = data.get("tls", {})
+    db_section = data.get("database", {})
 
     # [tls] section takes precedence; fall back to server.tls_*
     tls_cert = tls_section.get("cert") or server.get("tls_cert")
@@ -147,6 +163,11 @@ def load_config(path: Path) -> PxeOSConfig:
         ),
     )
 
+    database_config = DatabaseConfig(
+        backend=db_section.get("backend", "sqlite"),
+        url=db_section.get("url", "sqlite:///pxeos.db"),
+    )
+
     return PxeOSConfig(
         server_host=server.get("host", "0.0.0.0"),
         server_port=server.get("port", 8443),
@@ -164,6 +185,7 @@ def load_config(path: Path) -> PxeOSConfig:
         rate_limit=rate_limit,
         logging=logging_config,
         audit=audit_config,
+        database=database_config,
     )
 
 

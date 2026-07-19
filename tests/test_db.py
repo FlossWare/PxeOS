@@ -10,8 +10,11 @@ from pathlib import Path
 import pytest
 
 from pxeos.db import (
+    Base,
     JSONBackend,
     MemoryBackend,
+    ProvisionRow,
+    SQLAlchemyBackend,
     SQLiteBackend,
     StorageBackend,
     _dict_to_record,
@@ -548,6 +551,336 @@ class TestTrackerWithJSONBackend:
         )
         data = json.loads(self.json_path.read_text())
         assert data["aa:bb:cc:dd:ee:ff"]["state"] == "installing"
+
+
+class TestSQLAlchemyBackendDirect(_BackendContractTests):
+    """Test the SQLAlchemyBackend directly with SQLite in-memory."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.backend = SQLAlchemyBackend("sqlite:///:memory:")
+        yield
+        self.backend.close()
+
+    def test_query_by_state(self):
+        self.backend.save(
+            _make_record(
+                mac="aa:bb:cc:dd:ee:01",
+                state=ProvisionState.BOOTING,
+            )
+        )
+        self.backend.save(
+            _make_record(
+                mac="aa:bb:cc:dd:ee:02",
+                state=ProvisionState.COMPLETE,
+            )
+        )
+        self.backend.save(
+            _make_record(
+                mac="aa:bb:cc:dd:ee:03",
+                state=ProvisionState.BOOTING,
+            )
+        )
+        booting = self.backend.query_by_state(ProvisionState.BOOTING)
+        assert len(booting) == 2
+        complete = self.backend.query_by_state(ProvisionState.COMPLETE)
+        assert len(complete) == 1
+
+    def test_engine_property(self):
+        assert self.backend.engine is not None
+        assert self.backend.engine.dialect.name == "sqlite"
+
+    def test_concurrent_writes(self):
+        """10+ simultaneous provisions must not corrupt the database."""
+        errors: list = []
+
+        def _writer(i: int) -> None:
+            try:
+                mac = f"aa:bb:cc:dd:{i:02x}:00"
+                rec = _make_record(mac=mac, profile=f"p{i}")
+                self.backend.save(rec)
+                rec.state = ProvisionState.BOOTING
+                rec.updated_at = time.time()
+                rec.history.append(
+                    (ProvisionState.BOOTING, rec.updated_at)
+                )
+                self.backend.save(rec)
+                rec.state = ProvisionState.COMPLETE
+                rec.updated_at = time.time()
+                rec.completed_at = rec.updated_at
+                rec.history.append(
+                    (ProvisionState.COMPLETE, rec.updated_at)
+                )
+                self.backend.save(rec)
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=_writer, args=(i,))
+            for i in range(20)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"Concurrent write errors: {errors}"
+        records = self.backend.list_all()
+        assert len(records) == 20
+        for rec in records:
+            assert rec.state == ProvisionState.COMPLETE
+
+
+class TestSQLAlchemyBackendFileDB(_BackendContractTests):
+    """Test the SQLAlchemyBackend with a file-based SQLite DB."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, tmp_path):
+        db_path = tmp_path / "test_sa.db"
+        self.backend = SQLAlchemyBackend(f"sqlite:///{db_path}")
+        yield
+        self.backend.close()
+
+    def test_persists_across_instances(self, tmp_path):
+        db_path = tmp_path / "persist_sa.db"
+        url = f"sqlite:///{db_path}"
+        b1 = SQLAlchemyBackend(url)
+        b1.save(_make_record(mac="aa:bb:cc:dd:ee:ff"))
+        b1.close()
+
+        b2 = SQLAlchemyBackend(url)
+        got = b2.get("aa:bb:cc:dd:ee:ff")
+        assert got is not None
+        assert got.mac == "aa:bb:cc:dd:ee:ff"
+        b2.close()
+
+
+class TestPostgreSQLURLParsing:
+    """Test PostgreSQL URL construction and engine creation (mocked)."""
+
+    def test_postgresql_url_accepted(self):
+        """SQLAlchemyBackend should accept a PostgreSQL URL."""
+        from unittest.mock import MagicMock, patch
+
+        mock_engine = MagicMock()
+        mock_engine.dialect.name = "postgresql"
+        mock_engine.url = "postgresql://user:pass@localhost/pxeos"
+
+        with patch("pxeos.db.create_engine", return_value=mock_engine) as mock_ce:
+            with patch("pxeos.db.Base.metadata.create_all"):
+                backend = SQLAlchemyBackend(
+                    "postgresql://user:pass@localhost/pxeos"
+                )
+                mock_ce.assert_called_once_with(
+                    "postgresql://user:pass@localhost/pxeos"
+                )
+                assert backend.engine is mock_engine
+
+    def test_postgresql_url_with_port(self):
+        """PostgreSQL URL with custom port should work."""
+        from unittest.mock import MagicMock, patch
+
+        mock_engine = MagicMock()
+        mock_engine.dialect.name = "postgresql"
+        mock_engine.url = "postgresql://user:pass@db.example.com:5433/pxeos"
+
+        with patch("pxeos.db.create_engine", return_value=mock_engine):
+            with patch("pxeos.db.Base.metadata.create_all"):
+                backend = SQLAlchemyBackend(
+                    "postgresql://user:pass@db.example.com:5433/pxeos"
+                )
+                assert backend.engine is mock_engine
+
+    def test_postgresql_psycopg2_driver(self):
+        """PostgreSQL URL with explicit psycopg2 driver."""
+        from unittest.mock import MagicMock, patch
+
+        mock_engine = MagicMock()
+        mock_engine.dialect.name = "postgresql"
+        mock_engine.url = "postgresql+psycopg2://user:pass@localhost/pxeos"
+
+        with patch("pxeos.db.create_engine", return_value=mock_engine) as mock_ce:
+            with patch("pxeos.db.Base.metadata.create_all"):
+                backend = SQLAlchemyBackend(
+                    "postgresql+psycopg2://user:pass@localhost/pxeos"
+                )
+                mock_ce.assert_called_once_with(
+                    "postgresql+psycopg2://user:pass@localhost/pxeos"
+                )
+
+
+class TestMariaDBURLParsing:
+    """Test MariaDB/MySQL URL construction and engine creation (mocked)."""
+
+    def test_mariadb_pymysql_url_accepted(self):
+        """SQLAlchemyBackend should accept a MariaDB URL with pymysql driver."""
+        from unittest.mock import MagicMock, patch
+
+        mock_engine = MagicMock()
+        mock_engine.dialect.name = "mysql"
+        mock_engine.url = "mysql+pymysql://user:pass@localhost/pxeos"
+
+        with patch("pxeos.db.create_engine", return_value=mock_engine) as mock_ce:
+            with patch("pxeos.db.Base.metadata.create_all"):
+                backend = SQLAlchemyBackend(
+                    "mysql+pymysql://user:pass@localhost/pxeos"
+                )
+                mock_ce.assert_called_once_with(
+                    "mysql+pymysql://user:pass@localhost/pxeos"
+                )
+                assert backend.engine is mock_engine
+
+    def test_mariadb_url_with_port(self):
+        """MariaDB URL with custom port should work."""
+        from unittest.mock import MagicMock, patch
+
+        mock_engine = MagicMock()
+        mock_engine.dialect.name = "mysql"
+        mock_engine.url = "mysql+pymysql://user:pass@mariadb.local:3307/pxeos"
+
+        with patch("pxeos.db.create_engine", return_value=mock_engine):
+            with patch("pxeos.db.Base.metadata.create_all"):
+                backend = SQLAlchemyBackend(
+                    "mysql+pymysql://user:pass@mariadb.local:3307/pxeos"
+                )
+                assert backend.engine is mock_engine
+
+    def test_mariadb_mariadbconnector_driver(self):
+        """MariaDB URL with mariadbconnector driver."""
+        from unittest.mock import MagicMock, patch
+
+        mock_engine = MagicMock()
+        mock_engine.dialect.name = "mysql"
+        mock_engine.url = "mariadb+mariadbconnector://user:pass@localhost/pxeos"
+
+        with patch("pxeos.db.create_engine", return_value=mock_engine) as mock_ce:
+            with patch("pxeos.db.Base.metadata.create_all"):
+                backend = SQLAlchemyBackend(
+                    "mariadb+mariadbconnector://user:pass@localhost/pxeos"
+                )
+                mock_ce.assert_called_once_with(
+                    "mariadb+mariadbconnector://user:pass@localhost/pxeos"
+                )
+
+
+class TestProvisionRowModel:
+    """Test the SQLAlchemy ORM model conversion methods."""
+
+    def test_from_provision_record(self):
+        rec = _make_record()
+        row = ProvisionRow.from_provision_record(rec)
+        assert row.mac == rec.mac.lower()
+        assert row.profile == rec.profile
+        assert row.os_family == rec.os_family
+        assert row.os_version == rec.os_version
+        assert row.state == rec.state.value
+        assert row.started_at == rec.started_at
+        assert row.netboot_enabled == rec.netboot_enabled
+        # History should be JSON
+        history = json.loads(row.history)
+        assert len(history) == 1
+
+    def test_to_provision_record(self):
+        now = time.time()
+        row = ProvisionRow(
+            mac="aa:bb:cc:dd:ee:ff",
+            profile="fedora-server",
+            os_family="fedora",
+            os_version="41",
+            state="registered",
+            started_at=now,
+            updated_at=now,
+            history=json.dumps([
+                {"state": "registered", "timestamp": now}
+            ]),
+            netboot_enabled=True,
+        )
+        rec = row.to_provision_record()
+        assert rec.mac == "aa:bb:cc:dd:ee:ff"
+        assert rec.state == ProvisionState.REGISTERED
+        assert rec.netboot_enabled is True
+        assert len(rec.history) == 1
+
+    def test_round_trip_via_model(self):
+        original = _make_record()
+        original.error_message = "test error"
+        original.netboot_enabled = False
+        row = ProvisionRow.from_provision_record(original)
+        restored = row.to_provision_record()
+        assert restored.mac == original.mac.lower()
+        assert restored.profile == original.profile
+        assert restored.error_message == "test error"
+        assert restored.netboot_enabled is False
+        assert restored.state == original.state
+
+
+class TestDatabaseConfig:
+    """Test the DatabaseConfig dataclass and config loading."""
+
+    def test_default_values(self):
+        from pxeos.config import DatabaseConfig
+
+        cfg = DatabaseConfig()
+        assert cfg.backend == "sqlite"
+        assert cfg.url == "sqlite:///pxeos.db"
+
+    def test_postgresql_config(self):
+        from pxeos.config import DatabaseConfig
+
+        cfg = DatabaseConfig(
+            backend="postgresql",
+            url="postgresql://user:pass@localhost:5432/pxeos",
+        )
+        assert cfg.backend == "postgresql"
+        assert "postgresql" in cfg.url
+
+    def test_mariadb_config(self):
+        from pxeos.config import DatabaseConfig
+
+        cfg = DatabaseConfig(
+            backend="mariadb",
+            url="mysql+pymysql://user:pass@localhost:3306/pxeos",
+        )
+        assert cfg.backend == "mariadb"
+        assert "pymysql" in cfg.url
+
+    def test_load_config_with_database_section(self, tmp_path):
+        from pxeos.config import load_config
+
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(
+            '[database]\n'
+            'backend = "postgresql"\n'
+            'url = "postgresql://admin:secret@db.local:5432/pxeos"\n'
+        )
+        cfg = load_config(config_file)
+        assert cfg.database.backend == "postgresql"
+        assert cfg.database.url == "postgresql://admin:secret@db.local:5432/pxeos"
+
+    def test_load_config_without_database_section(self, tmp_path):
+        from pxeos.config import load_config
+
+        config_file = tmp_path / "config.toml"
+        config_file.write_text("")
+        cfg = load_config(config_file)
+        assert cfg.database.backend == "sqlite"
+        assert cfg.database.url == "sqlite:///pxeos.db"
+
+
+class TestSQLiteBackendIsAlias:
+    """Verify SQLiteBackend is a thin wrapper around SQLAlchemyBackend."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, tmp_path):
+        self.backend = SQLiteBackend(tmp_path / "alias_test.db")
+        yield
+        self.backend.close()
+
+    def test_is_sqlalchemy_backend(self):
+        assert isinstance(self.backend, SQLAlchemyBackend)
+
+    def test_engine_is_sqlite(self):
+        assert self.backend.engine.dialect.name == "sqlite"
 
 
 class TestTrackerWithoutBackend:

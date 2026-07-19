@@ -1,8 +1,8 @@
 """Database abstraction layer for PxeOS provisioning state.
 
 Provides a pluggable storage backend so provisioning records can be
-persisted to SQLite (default), JSON files (fallback), or kept purely
-in memory (for tests).
+persisted to SQLite, PostgreSQL, or MariaDB via SQLAlchemy (default),
+JSON files (fallback), or kept purely in memory (for tests).
 """
 
 from __future__ import annotations
@@ -10,15 +10,102 @@ from __future__ import annotations
 import abc
 import json
 import logging
-import sqlite3
 import threading
-import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Float,
+    Index,
+    String,
+    Text,
+    create_engine,
+    event,
+)
+from sqlalchemy.orm import (
+    Session,
+    declarative_base,
+    sessionmaker,
+)
+from sqlalchemy.pool import StaticPool
 
 from pxeos.state import ProvisionRecord, ProvisionState
 
 logger = logging.getLogger("pxeos.db")
+
+
+# ---- SQLAlchemy ORM model ----
+
+Base = declarative_base()
+
+
+class ProvisionRow(Base):
+    """SQLAlchemy ORM model for the provisions table."""
+
+    __tablename__ = "provisions"
+
+    mac = Column(String(17), primary_key=True)
+    profile = Column(String(255), nullable=False)
+    os_family = Column(String(64), nullable=False)
+    os_version = Column(String(64), nullable=False)
+    state = Column(String(32), nullable=False)
+    started_at = Column(Float, nullable=True)
+    updated_at = Column(Float, nullable=True)
+    completed_at = Column(Float, nullable=True)
+    error_message = Column(Text, nullable=True)
+    history = Column(Text, nullable=False, default="[]")
+    netboot_enabled = Column(Boolean, nullable=False, default=True)
+
+    __table_args__ = (
+        Index("idx_provisions_state", "state"),
+        Index("idx_provisions_updated", "updated_at"),
+    )
+
+    def to_provision_record(self) -> ProvisionRecord:
+        """Convert ORM row to a ProvisionRecord dataclass."""
+        history_data = json.loads(self.history or "[]")
+        history_tuples = [
+            (ProvisionState(h["state"]), h["timestamp"])
+            for h in history_data
+        ]
+        return ProvisionRecord(
+            mac=self.mac,
+            profile=self.profile,
+            os_family=self.os_family,
+            os_version=self.os_version,
+            state=ProvisionState(self.state),
+            started_at=self.started_at,
+            updated_at=self.updated_at,
+            completed_at=self.completed_at,
+            error_message=self.error_message,
+            history=history_tuples,
+            netboot_enabled=bool(self.netboot_enabled),
+        )
+
+    @classmethod
+    def from_provision_record(
+        cls, record: ProvisionRecord
+    ) -> "ProvisionRow":
+        """Create an ORM row from a ProvisionRecord dataclass."""
+        history_json = json.dumps([
+            {"state": s.value, "timestamp": ts}
+            for s, ts in record.history
+        ])
+        return cls(
+            mac=record.mac.lower(),
+            profile=record.profile,
+            os_family=record.os_family,
+            os_version=record.os_version,
+            state=record.state.value,
+            started_at=record.started_at,
+            updated_at=record.updated_at,
+            completed_at=record.completed_at,
+            error_message=record.error_message,
+            history=history_json,
+            netboot_enabled=record.netboot_enabled,
+        )
 
 
 # ---- Abstract interface ----
@@ -96,161 +183,173 @@ def _dict_to_record(d: Dict[str, Any]) -> ProvisionRecord:
     )
 
 
-# ---- SQLite backend ----
+# ---- SQLAlchemy backend (supports SQLite, PostgreSQL, MariaDB) ----
 
 
-_SCHEMA_SQL = """\
-CREATE TABLE IF NOT EXISTS provisions (
-    mac            TEXT PRIMARY KEY,
-    profile        TEXT NOT NULL,
-    os_family      TEXT NOT NULL,
-    os_version     TEXT NOT NULL,
-    state          TEXT NOT NULL,
-    started_at     REAL,
-    updated_at     REAL,
-    completed_at   REAL,
-    error_message  TEXT,
-    history        TEXT NOT NULL DEFAULT '[]',
-    netboot_enabled INTEGER NOT NULL DEFAULT 1
-);
-CREATE INDEX IF NOT EXISTS idx_provisions_state
-    ON provisions(state);
-CREATE INDEX IF NOT EXISTS idx_provisions_updated
-    ON provisions(updated_at);
-"""
+def _set_sqlite_pragmas(dbapi_conn, connection_record):
+    """Set SQLite-specific pragmas when a new connection is created."""
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.close()
 
 
-class SQLiteBackend(StorageBackend):
-    """SQLite-backed storage with ACID transactions.
+class SQLAlchemyBackend(StorageBackend):
+    """SQLAlchemy-backed storage supporting SQLite, PostgreSQL, and MariaDB.
 
-    The database is created automatically if it does not exist.
-    Thread-safe via an internal lock (SQLite itself serialises
-    writes, but the lock avoids Python-level races).
+    Tables are auto-created on first use via ``create_all``.
+    Thread-safe via an internal lock.
     """
 
-    def __init__(self, db_path: Path) -> None:
-        self._db_path = db_path
+    def __init__(self, url: str, **engine_kwargs: Any) -> None:
+        self._url = url
         self._lock = threading.Lock()
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(
-            str(db_path),
-            check_same_thread=False,
+
+        # For SQLite file paths, ensure parent directory exists
+        if url.startswith("sqlite:///") and not url.startswith(
+            "sqlite:///:"
+        ):
+            db_path_str = url.replace("sqlite:///", "", 1)
+            if db_path_str:
+                Path(db_path_str).parent.mkdir(
+                    parents=True, exist_ok=True
+                )
+
+        # For SQLite, allow cross-thread usage (matches old
+        # sqlite3.connect(check_same_thread=False) behaviour).
+        # In-memory databases use StaticPool so all threads share
+        # the same connection and see the same tables/data.
+        if url.startswith("sqlite"):
+            engine_kwargs.setdefault("connect_args", {})
+            engine_kwargs["connect_args"].setdefault(
+                "check_same_thread", False
+            )
+            if ":memory:" in url or url == "sqlite://":
+                engine_kwargs.setdefault(
+                    "poolclass", StaticPool
+                )
+
+        self._engine = create_engine(url, **engine_kwargs)
+
+        # Apply SQLite-specific pragmas
+        if self._engine.dialect.name == "sqlite":
+            event.listen(
+                self._engine, "connect", _set_sqlite_pragmas
+            )
+
+        Base.metadata.create_all(self._engine)
+        self._session_factory = sessionmaker(bind=self._engine)
+        logger.info(
+            "SQLAlchemy backend opened: %s", self._engine.url
         )
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA busy_timeout=5000")
-        self._conn.executescript(_SCHEMA_SQL)
-        self._conn.commit()
-        logger.info("SQLite backend opened: %s", db_path)
+
+    @property
+    def engine(self):
+        """Expose the underlying SQLAlchemy engine for advanced use."""
+        return self._engine
 
     # -- public API --
 
     def save(self, record: ProvisionRecord) -> None:
-        history_json = json.dumps([
-            {"state": s.value, "timestamp": ts}
-            for s, ts in record.history
-        ])
         with self._lock:
-            self._conn.execute(
-                """\
-                INSERT OR REPLACE INTO provisions
-                    (mac, profile, os_family, os_version, state,
-                     started_at, updated_at, completed_at,
-                     error_message, history, netboot_enabled)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    record.mac.lower(),
-                    record.profile,
-                    record.os_family,
-                    record.os_version,
-                    record.state.value,
-                    record.started_at,
-                    record.updated_at,
-                    record.completed_at,
-                    record.error_message,
-                    history_json,
-                    int(record.netboot_enabled),
-                ),
-            )
-            self._conn.commit()
+            with self._session_factory() as session:
+                row = session.get(
+                    ProvisionRow, record.mac.lower()
+                )
+                if row is not None:
+                    # Update existing row
+                    history_json = json.dumps([
+                        {"state": s.value, "timestamp": ts}
+                        for s, ts in record.history
+                    ])
+                    row.profile = record.profile
+                    row.os_family = record.os_family
+                    row.os_version = record.os_version
+                    row.state = record.state.value
+                    row.started_at = record.started_at
+                    row.updated_at = record.updated_at
+                    row.completed_at = record.completed_at
+                    row.error_message = record.error_message
+                    row.history = history_json
+                    row.netboot_enabled = record.netboot_enabled
+                else:
+                    row = ProvisionRow.from_provision_record(
+                        record
+                    )
+                    session.add(row)
+                session.commit()
 
     def get(self, mac: str) -> Optional[ProvisionRecord]:
         with self._lock:
-            cur = self._conn.execute(
-                "SELECT * FROM provisions WHERE mac = ?",
-                (mac.lower(),),
-            )
-            row = cur.fetchone()
-        if row is None:
-            return None
-        return self._row_to_record(row, cur.description)
+            with self._session_factory() as session:
+                row = session.get(ProvisionRow, mac.lower())
+                if row is None:
+                    return None
+                return row.to_provision_record()
 
     def list_all(self) -> List[ProvisionRecord]:
         with self._lock:
-            cur = self._conn.execute(
-                "SELECT * FROM provisions ORDER BY updated_at DESC"
-            )
-            rows = cur.fetchall()
-            desc = cur.description
-        return [self._row_to_record(r, desc) for r in rows]
+            with self._session_factory() as session:
+                rows = (
+                    session.query(ProvisionRow)
+                    .order_by(ProvisionRow.updated_at.desc())
+                    .all()
+                )
+                return [r.to_provision_record() for r in rows]
 
     def delete(self, mac: str) -> bool:
         with self._lock:
-            cur = self._conn.execute(
-                "DELETE FROM provisions WHERE mac = ?",
-                (mac.lower(),),
-            )
-            self._conn.commit()
-            return cur.rowcount > 0
+            with self._session_factory() as session:
+                row = session.get(ProvisionRow, mac.lower())
+                if row is None:
+                    return False
+                session.delete(row)
+                session.commit()
+                return True
 
     def clear(self) -> None:
         with self._lock:
-            self._conn.execute("DELETE FROM provisions")
-            self._conn.commit()
+            with self._session_factory() as session:
+                session.query(ProvisionRow).delete()
+                session.commit()
 
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
-        logger.info("SQLite backend closed: %s", self._db_path)
+            self._engine.dispose()
+        logger.info(
+            "SQLAlchemy backend closed: %s", self._url
+        )
 
-    def query_by_state(self, state: ProvisionState) -> List[ProvisionRecord]:
+    def query_by_state(
+        self, state: ProvisionState
+    ) -> List[ProvisionRecord]:
         """Return all records in the given state (uses index)."""
         with self._lock:
-            cur = self._conn.execute(
-                "SELECT * FROM provisions WHERE state = ? "
-                "ORDER BY updated_at DESC",
-                (state.value,),
-            )
-            rows = cur.fetchall()
-            desc = cur.description
-        return [self._row_to_record(r, desc) for r in rows]
+            with self._session_factory() as session:
+                rows = (
+                    session.query(ProvisionRow)
+                    .filter(
+                        ProvisionRow.state == state.value
+                    )
+                    .order_by(ProvisionRow.updated_at.desc())
+                    .all()
+                )
+                return [
+                    r.to_provision_record() for r in rows
+                ]
 
-    # -- internal helpers --
 
-    @staticmethod
-    def _row_to_record(
-        row: tuple, description: Any,
-    ) -> ProvisionRecord:
-        cols = [d[0] for d in description]
-        d = dict(zip(cols, row))
-        history = json.loads(d.get("history", "[]"))
-        history_tuples = [
-            (ProvisionState(h["state"]), h["timestamp"])
-            for h in history
-        ]
-        return ProvisionRecord(
-            mac=d["mac"],
-            profile=d["profile"],
-            os_family=d["os_family"],
-            os_version=d["os_version"],
-            state=ProvisionState(d["state"]),
-            started_at=d.get("started_at"),
-            updated_at=d.get("updated_at"),
-            completed_at=d.get("completed_at"),
-            error_message=d.get("error_message"),
-            history=history_tuples,
-            netboot_enabled=bool(d.get("netboot_enabled", 1)),
-        )
+class SQLiteBackend(SQLAlchemyBackend):
+    """SQLite-backed storage (convenience wrapper around SQLAlchemyBackend).
+
+    Accepts a :class:`pathlib.Path` for backward compatibility with
+    existing code that passes ``db_path`` directly.
+    """
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        url = f"sqlite:///{db_path}"
+        super().__init__(url)
 
 
 # ---- JSON file backend (fallback) ----

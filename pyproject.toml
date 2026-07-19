@@ -50,6 +50,8 @@ dependencies = [
     "pydantic>=2.0.0,<3.0",
     # Required: multipart form handling for ISO upload
     "python-multipart>=0.0.6,<1.0",
+    # Required: database ORM for multi-DB provisioning state
+    "sqlalchemy>=2.0.0,<3.0",
 ]
 
 [project.optional-dependencies]
@@ -57,6 +59,10 @@ dependencies = [
 completion = ["argcomplete>=3.0,<4.0"]
 # Optional: TLS certificate auto-generation
 tls = ["cryptography>=41.0,<51.0"]
+# Optional: PostgreSQL database driver
+postgres = ["psycopg2-binary>=2.9,<3.0"]
+# Optional: MariaDB/MySQL database driver
+mysql = ["pymysql>=1.0,<2.0"]
 # Development and testing tools
 dev = [
     # Testing
