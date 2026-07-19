@@ -257,7 +257,7 @@ class TestRenderIpxeScriptWithCustomCommands:
         )
         boot_idx = next(
             i for i, l in enumerate(lines)
-            if l.startswith("boot ")
+            if l == "boot"
         )
         assert echo_idx < boot_idx
 

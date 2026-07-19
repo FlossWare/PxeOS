@@ -134,7 +134,7 @@ class TestRenderIpxeScript:
         assert script.startswith("#!ipxe")
         assert "kernel /images/fedora/41/vmlinuz" in script
         assert "initrd /images/fedora/41/initrd.img" in script
-        assert "boot " in script
+        assert "\nboot\n" in script
         assert "inst.ks=" in script
 
     def test_omits_initrd_when_none(self):

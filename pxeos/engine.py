@@ -199,7 +199,18 @@ class ProvisioningEngine:
             if initrd_url and not initrd_url.startswith(("http://", "https://")):
                 initrd_url = f"{base}/{initrd_url.lstrip('/')}"
 
-        lines.append(f"kernel {kernel_url}")
+        args = list(assets.boot_args)
+        if not is_live:
+            base_url = self._base_url()
+            autoinstall_url = (
+                f"{base_url}/api/v1/autoinstall/{mac}"
+            )
+            args.append(f"inst.ks={autoinstall_url}")
+
+        kernel_line = f"kernel {kernel_url}"
+        if args:
+            kernel_line += " " + " ".join(args)
+        lines.append(kernel_line)
         if initrd_url:
             lines.append(f"initrd {initrd_url}")
 
@@ -229,14 +240,7 @@ class ProvisioningEngine:
                     _substitute_ipxe_vars(cmd, subst_vars)
                 )
 
-        args = list(assets.boot_args)
-        if not is_live:
-            base_url = self._base_url()
-            autoinstall_url = (
-                f"{base_url}/api/v1/autoinstall/{mac}"
-            )
-            args.append(f"inst.ks={autoinstall_url}")
-        lines.append(f"boot {' '.join(args)}")
+        lines.append("boot")
         lines.append("")
 
         script = "\n".join(lines)

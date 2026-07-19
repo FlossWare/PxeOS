@@ -229,7 +229,7 @@ class TestPxeBootLifecycle:
 
         resp = client.get(f"/api/v1/boot/{mac}")
         assert resp.status_code == 200
-        assert "boot " in resp.text
+        assert "\nboot\n" in resp.text
 
     def test_boot_script_has_autoinstall_reference(self, tmp_path, os_family):
         mac = _make_mac(5)
@@ -372,7 +372,7 @@ class TestPxeBootLifecycle:
         assert boot_resp.text.startswith("#!ipxe")
         assert f"kernel {cfg['expected_kernel']}" in boot_resp.text
         assert f"initrd {cfg['expected_initrd']}" in boot_resp.text
-        assert "boot " in boot_resp.text
+        assert "\nboot\n" in boot_resp.text
 
         # Step 2: Autoinstall request
         autoinstall_resp = client.get(f"/api/v1/autoinstall/{mac}")
@@ -526,7 +526,7 @@ class TestConcurrentBoots:
             assert resp.status_code == 200, f"Boot failed for {mac}"
             assert resp.text.startswith("#!ipxe"), f"Bad iPXE for {mac}"
             assert "kernel" in resp.text, f"No kernel for {mac}"
-            assert "boot " in resp.text, f"No boot cmd for {mac}"
+            assert "\nboot\n" in resp.text, f"No boot cmd for {mac}"
 
     def test_concurrent_autoinstalls_correct(self, tmp_path):
         """10 hosts fetch autoinstall concurrently."""
