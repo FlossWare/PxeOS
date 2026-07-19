@@ -43,6 +43,9 @@
                         hx-target="#provision-table"
                         hx-swap="innerHTML">Enable Netboot</button>
                 {% endif %}
+                {% if console_macs is defined and p.mac and p.mac|lower in console_macs %}
+                <a href="/web/console/{{ p.mac }}" class="btn btn-sm" style="background: rgba(79,143,247,0.15); border: 1px solid var(--accent); color: var(--accent);" target="_blank">Console</a>
+                {% endif %}
             </td>
         </tr>
         {% endfor %}

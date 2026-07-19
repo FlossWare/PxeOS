@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}PxeOS - Console: {{ mac }}{% endblock %}
+{% block content %}
+<h2>Console: <code>{{ mac }}</code></h2>
+
+<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+    <span id="conn-status" class="badge" style="background: rgba(251,191,36,0.15); color: var(--warning);">Connecting...</span>
+    <span style="color: var(--muted); font-size: 0.85rem;">
+        Type: <strong>{{ console_type }}</strong> |
+        Endpoint: <code>{{ console_host }}:{{ console_port }}</code>
+    </span>
+    <button class="btn btn-sm btn-primary" id="fullscreen-btn" onclick="toggleFullscreen()">Fullscreen</button>
+    <a href="/web/provisions" class="btn btn-sm" style="background: var(--surface); border: 1px solid var(--border); color: var(--text);">Back</a>
+</div>
+
+<div id="console-container" class="card" style="padding: 0; overflow: hidden; background: #000; min-height: 480px; position: relative;">
+    {% if console_type == "serial" %}
+    <div id="terminal" style="width: 100%; height: 480px;"></div>
+    {% else %}
+    <canvas id="vnc-canvas" style="width: 100%; display: block;"></canvas>
+    {% endif %}
+</div>
+
+{% if console_type == "serial" %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<script>
+(function() {
+    var term = new Terminal({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: '"Fira Code", "Cascadia Code", Menlo, Monaco, monospace',
+        theme: {
+            background: '#0f1117',
+            foreground: '#e1e4ed',
+            cursor: '#4f8ff7',
+        },
+    });
+    var fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById('terminal'));
+    fitAddon.fit();
+
+    var statusEl = document.getElementById('conn-status');
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var ws = new WebSocket(proto + '//' + location.host + '/web/ws/console/{{ mac }}');
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = function() {
+        statusEl.style.background = 'rgba(52,211,153,0.15)';
+        statusEl.style.color = 'var(--success)';
+        statusEl.textContent = 'Connected';
+    };
+    ws.onmessage = function(ev) {
+        if (ev.data instanceof ArrayBuffer) {
+            term.write(new Uint8Array(ev.data));
+        } else {
+            try {
+                var msg = JSON.parse(ev.data);
+                if (msg.error) {
+                    term.write('\r\n\x1b[31mError: ' + msg.error + '\x1b[0m\r\n');
+                }
+            } catch(e) {
+                term.write(ev.data);
+            }
+        }
+    };
+    ws.onclose = function() {
+        statusEl.style.background = 'rgba(248,113,113,0.15)';
+        statusEl.style.color = 'var(--danger)';
+        statusEl.textContent = 'Disconnected';
+        term.write('\r\n\x1b[33m--- Connection closed ---\x1b[0m\r\n');
+    };
+    ws.onerror = function() {
+        statusEl.style.background = 'rgba(248,113,113,0.15)';
+        statusEl.style.color = 'var(--danger)';
+        statusEl.textContent = 'Error';
+    };
+
+    term.onData(function(data) {
+        if (ws.readyState === WebSocket.OPEN) {
+            var encoder = new TextEncoder();
+            ws.send(encoder.encode(data));
+        }
+    });
+
+    window.addEventListener('resize', function() { fitAddon.fit(); });
+})();
+</script>
+
+{% else %}
+{# VNC / SPICE via noVNC #}
+<script type="module">
+    import RFB from 'https://cdn.jsdelivr.net/npm/@nicedoc/novnc@0.0.3/core/rfb.js';
+
+    var statusEl = document.getElementById('conn-status');
+    var container = document.getElementById('console-container');
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var url = proto + '//' + location.host + '/web/ws/console/{{ mac }}';
+
+    try {
+        var rfb = new RFB(container, url, {
+            scaleViewport: true,
+            resizeSession: true,
+        });
+
+        rfb.addEventListener('connect', function() {
+            statusEl.style.background = 'rgba(52,211,153,0.15)';
+            statusEl.style.color = 'var(--success)';
+            statusEl.textContent = 'Connected';
+        });
+        rfb.addEventListener('disconnect', function(ev) {
+            statusEl.style.background = 'rgba(248,113,113,0.15)';
+            statusEl.style.color = 'var(--danger)';
+            statusEl.textContent = ev.detail.clean ? 'Disconnected' : 'Connection lost';
+        });
+        rfb.addEventListener('credentialsrequired', function() {
+            statusEl.style.background = 'rgba(251,191,36,0.15)';
+            statusEl.style.color = 'var(--warning)';
+            statusEl.textContent = 'Credentials required';
+        });
+    } catch(e) {
+        statusEl.style.background = 'rgba(248,113,113,0.15)';
+        statusEl.style.color = 'var(--danger)';
+        statusEl.textContent = 'Failed to load noVNC';
+        container.innerHTML = '<div style="color: var(--danger); padding: 2rem; text-align: center;">'
+            + 'Failed to initialize VNC viewer. noVNC module could not be loaded.<br>'
+            + 'Error: ' + e.message + '</div>';
+    }
+</script>
+{% endif %}
+
+<script>
+function toggleFullscreen() {
+    var el = document.getElementById('console-container');
+    if (!document.fullscreenElement) {
+        el.requestFullscreen().catch(function(err) {});
+    } else {
+        document.exitFullscreen();
+    }
+}
+</script>
+{% endblock %}

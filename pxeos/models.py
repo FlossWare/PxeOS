@@ -81,3 +81,5 @@ class HostRule:
     bmc_password: Optional[str] = None
     bmc_driver: Optional[str] = None  # "ipmi" or "redfish"
     deploy_mode: str = "pxe"  # "pxe" or "image"
+    console_type: Optional[str] = None  # "vnc", "spice", or "serial"
+    console_endpoint: Optional[str] = None  # "host:port"
