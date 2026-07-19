@@ -82,9 +82,12 @@ async def pxeos_error_handler(request: Any, exc: PxeOSError) -> Response:
     return JSONResponse(status_code=status, content=body)
 
 
+from pxeos.webhooks import WebhookConfig, WebhookDelivery, WebhookManager
+
 _engine: Optional[ProvisioningEngine] = None
 _registry: Optional[PluginRegistry] = None
 _config: Optional[PxeOSConfig] = None
+_webhook_manager: Optional[WebhookManager] = None
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -199,10 +202,27 @@ def init_app(
     config: PxeOSConfig,
     matcher: HostMatcher,
 ) -> FastAPI:
-    global _engine, _registry, _config
+    global _engine, _registry, _config, _webhook_manager
     _registry = registry
     _config = config
     _engine = ProvisioningEngine(registry, matcher, config)
+
+    # Initialize webhook manager from config
+    def _audit_webhook(delivery: WebhookDelivery) -> None:
+        get_audit_logger().log_webhook_delivery(
+            delivery_id=delivery.delivery_id,
+            webhook_url=delivery.webhook_url,
+            event=delivery.event,
+            success=delivery.success,
+            attempts=delivery.attempts,
+            status_code=delivery.status_code,
+            error=delivery.error,
+        )
+
+    _webhook_manager = WebhookManager(
+        config.webhooks,
+        on_delivery=_audit_webhook,
+    )
 
     # Initialize audit logging
     init_audit(config.audit)
@@ -283,6 +303,14 @@ def get_boot_script(mac: str, request: Request) -> Response:
         get_audit_logger().log_boot_request(
             mac=mac, client_ip=client_ip,
         )
+        # Fire webhook for boot started
+        if _webhook_manager is not None:
+            record = _engine.tracker.get(mac)
+            _webhook_manager.fire("boot.started", {
+                "mac": mac,
+                "profile": record.profile if record else "",
+                "timestamp": time.time(),
+            })
         return Response(
             content=script, media_type="text/plain"
         )
@@ -315,6 +343,13 @@ def disable_netboot(mac: str, request: Request) -> Dict[str, Any]:
         get_audit_logger().log_netboot_change(
             mac=mac, enabled=False, client_ip=client_ip,
         )
+        # Fire webhook for netboot disabled
+        if _webhook_manager is not None:
+            _webhook_manager.fire("netboot.disabled", {
+                "mac": mac,
+                "profile": record.profile,
+                "timestamp": time.time(),
+            })
         return {
             "mac": record.mac,
             "netboot_enabled": record.netboot_enabled,
@@ -370,6 +405,14 @@ def get_autoinstall(mac: str, request: Request) -> Response:
         get_audit_logger().log_autoinstall_fetch(
             mac=mac, client_ip=client_ip,
         )
+        # Fire webhook for install started
+        if _webhook_manager is not None:
+            record = _engine.tracker.get(mac)
+            _webhook_manager.fire("install.started", {
+                "mac": mac,
+                "profile": record.profile if record else "",
+                "timestamp": time.time(),
+            })
         return Response(
             content=content, media_type="text/plain"
         )
@@ -632,6 +675,13 @@ def mark_provision_complete(mac: str) -> Dict[str, Any]:
         new_state=ProvisionState.COMPLETE.value,
         profile=record.profile,
     )
+    # Fire webhook for install complete
+    if _webhook_manager is not None:
+        _webhook_manager.fire("install.complete", {
+            "mac": mac,
+            "profile": record.profile,
+            "timestamp": time.time(),
+        })
     return record.to_dict()
 
 
@@ -660,6 +710,14 @@ def mark_provision_failed(
         profile=record.profile,
         error_message=body.error,
     )
+    # Fire webhook for install failed
+    if _webhook_manager is not None:
+        _webhook_manager.fire("install.failed", {
+            "mac": mac,
+            "profile": record.profile,
+            "error": body.error,
+            "timestamp": time.time(),
+        })
     return record.to_dict()
 
 
@@ -724,6 +782,68 @@ def query_audit_log(
         since=since,
         limit=limit,
     )
+
+
+# ---------------------------------------------------------------
+# Webhook management endpoints (issue #56)
+# ---------------------------------------------------------------
+
+
+class WebhookResponse(BaseModel):
+    url: str
+    events: List[str]
+    retry_count: int
+    timeout: float
+
+
+class WebhookTestResult(BaseModel):
+    url: str
+    success: bool
+    attempts: int
+    status_code: Optional[int] = None
+    error: Optional[str] = None
+
+
+@app.get(
+    "/api/v1/webhooks",
+    response_model=List[WebhookResponse],
+    dependencies=[Depends(require_role(Role.VIEWER))],
+)
+def list_webhooks() -> List[Dict[str, Any]]:
+    """List configured webhooks (secrets are never exposed)."""
+    if _webhook_manager is None:
+        return []
+    return [
+        {
+            "url": wh.url,
+            "events": wh.events,
+            "retry_count": wh.retry_count,
+            "timeout": wh.timeout,
+        }
+        for wh in _webhook_manager.webhooks
+    ]
+
+
+@app.post(
+    "/api/v1/webhooks/test",
+    response_model=List[WebhookTestResult],
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def test_webhooks() -> List[Dict[str, Any]]:
+    """Send a test webhook to all configured endpoints."""
+    if _webhook_manager is None:
+        return []
+    deliveries = _webhook_manager.send_test()
+    return [
+        {
+            "url": d.webhook_url,
+            "success": d.success,
+            "attempts": d.attempts,
+            "status_code": d.status_code,
+            "error": d.error,
+        }
+        for d in deliveries
+    ]
 
 
 # ---------------------------------------------------------------

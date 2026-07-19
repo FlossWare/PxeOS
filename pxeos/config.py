@@ -10,6 +10,7 @@ from typing import List, Optional
 from pxeos.audit import AuditConfig
 from pxeos.logging_config import LoggingConfig
 from pxeos.models import BootFirmware, HostRule, ProvisionProfile
+from pxeos.webhooks import WebhookConfig
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -78,6 +79,9 @@ class PxeOSConfig:
     )
     database: DatabaseConfig = field(
         default_factory=DatabaseConfig
+    )
+    webhooks: List[WebhookConfig] = field(
+        default_factory=list
     )
 
 
@@ -168,6 +172,19 @@ def load_config(path: Path) -> PxeOSConfig:
         url=db_section.get("url", "sqlite:///pxeos.db"),
     )
 
+    webhooks_data = data.get("webhooks", [])
+    webhooks: List[WebhookConfig] = []
+    for wh in webhooks_data:
+        webhooks.append(
+            WebhookConfig(
+                url=wh["url"],
+                events=wh.get("events", []),
+                secret=wh.get("secret", ""),
+                retry_count=int(wh.get("retry_count", 3)),
+                timeout=float(wh.get("timeout", 10.0)),
+            )
+        )
+
     return PxeOSConfig(
         server_host=server.get("host", "0.0.0.0"),
         server_port=server.get("port", 8443),
@@ -186,6 +203,7 @@ def load_config(path: Path) -> PxeOSConfig:
         logging=logging_config,
         audit=audit_config,
         database=database_config,
+        webhooks=webhooks,
     )
 
 
