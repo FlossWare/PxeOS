@@ -91,6 +91,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_image_parser(sub)
     _add_service_parser(sub)
     _add_mirror_parser(sub)
+    _add_dhcp_parser(sub)
 
     return parser
 
@@ -2191,6 +2192,8 @@ def _dispatch(
         return _cmd_service(args, config)
     elif args.command == "mirror":
         return _cmd_mirror(args, config)
+    elif args.command == "dhcp":
+        return _cmd_dhcp(args, config)
 
     return 1
 
@@ -2336,6 +2339,140 @@ def _cmd_mirror(
     print(
         "usage: pxeos mirror {add|remove|sync|list|status}"
     )
+    return 1
+
+
+def _add_dhcp_parser(
+    sub: argparse._SubParsersAction,
+) -> None:
+    dhcp = sub.add_parser(
+        "dhcp",
+        help="generate DHCP config for PXE boot infrastructure",
+    )
+    dhcp_sub = dhcp.add_subparsers(dest="dhcp_action")
+
+    gen = dhcp_sub.add_parser(
+        "generate",
+        help="generate DHCP config snippets from named hosts",
+    )
+    gen.add_argument(
+        "--format",
+        dest="dhcp_format",
+        default="dnsmasq",
+        choices=["dnsmasq", "isc-dhcp"],
+        help="output format (default: dnsmasq)",
+    )
+    gen.add_argument(
+        "--pxe-server",
+        default="",
+        help="PXE/TFTP server IP address",
+    )
+    gen.add_argument(
+        "--tftp-root",
+        default="",
+        help="TFTP root path (default: from config)",
+    )
+    gen.add_argument(
+        "--boot-file",
+        default="lpxelinux.0",
+        help="boot filename (default: lpxelinux.0)",
+    )
+    gen.add_argument(
+        "--domain",
+        default="",
+        help="DNS domain for hostnames",
+    )
+    gen.add_argument(
+        "--subnet",
+        default="",
+        help="subnet address (ISC DHCP only)",
+    )
+    gen.add_argument(
+        "--netmask",
+        default="255.255.255.0",
+        help="subnet netmask (ISC DHCP only)",
+    )
+    gen.add_argument(
+        "--range-start",
+        default="",
+        help="dynamic range start (ISC DHCP only)",
+    )
+    gen.add_argument(
+        "--range-end",
+        default="",
+        help="dynamic range end (ISC DHCP only)",
+    )
+    gen.add_argument(
+        "--output", "-o",
+        type=Path,
+        default=None,
+        help="write output to file instead of stdout",
+    )
+    gen.add_argument(
+        "--dns-only",
+        action="store_true",
+        default=False,
+        help="generate DNS records only (dnsmasq only)",
+    )
+
+
+def _cmd_dhcp(
+    args: argparse.Namespace,
+    config: PxeOSConfig,
+) -> int:
+    from pxeos.dhcp import DnsmasqConfigGenerator, ISCDHCPConfigGenerator
+    from pxeos.named_objects import NamedObjectStore
+
+    if args.dhcp_action == "generate":
+        store = NamedObjectStore(config.data_dir / "named")
+        hosts = store.list_hosts()
+
+        tftp_root = args.tftp_root or str(config.tftp_root)
+        pxe_server = args.pxe_server
+
+        if args.dhcp_format == "dnsmasq":
+            gen = DnsmasqConfigGenerator(
+                tftp_root=tftp_root,
+                pxe_server=pxe_server,
+                default_boot_filename=args.boot_file,
+                domain=args.domain,
+            )
+            if args.dns_only:
+                output = gen.generate_dns_records(hosts)
+            else:
+                output = gen.generate(hosts)
+        else:
+            gen = ISCDHCPConfigGenerator(
+                tftp_root=tftp_root,
+                pxe_server=pxe_server,
+                default_boot_filename=args.boot_file,
+                subnet=args.subnet,
+                netmask=args.netmask,
+                domain_name=args.domain,
+                range_start=args.range_start,
+                range_end=args.range_end,
+            )
+            output = gen.generate(hosts)
+
+        if args.output:
+            try:
+                args.output.parent.mkdir(
+                    parents=True, exist_ok=True,
+                )
+                args.output.write_text(output)
+            except OSError as exc:
+                print(
+                    f"error: cannot write to {args.output}: {exc}",
+                    file=sys.stderr,
+                )
+                return 1
+            print(f"DHCP config written to {args.output}")
+        else:
+            print(output, end="")
+
+        return 0
+
+    print("usage: pxeos dhcp {generate}")
     return 1
 
 
