@@ -1,0 +1,130 @@
+---
+# Example playbook: provision bare-metal hosts via PxeOS
+#
+# Usage:
+#   ansible-playbook provision_hosts.yml \
+#     -e pxeos_server=https://pxe.example.com:8443 \
+#     -e pxeos_api_key=pxeos_xxxx
+#
+# This playbook:
+#   1. Creates provisioning profiles (named distros)
+#   2. Registers hosts with MAC-to-profile bindings
+#
+# Prerequisites:
+#   - PxeOS server running with auth enabled
+#   - An admin-level API key
+#   - The flossware.pxeos collection installed
+
+- name: Set up PxeOS provisioning profiles and hosts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    pxeos_server: "https://pxe.example.com:8443"
+    pxeos_api_key: ""
+    validate_certs: true
+
+    profiles:
+      - name: fedora42-base
+        os_family: fedora
+        vendor: "Fedora Project"
+        version: "42"
+        arch: "x86_64"
+        kernel_path: "/distros/fedora/42/vmlinuz"
+        initrd_path: "/distros/fedora/42/initrd.img"
+        install_url: "http://mirror.example.com/fedora/42/Everything/x86_64/os"
+        comment: "Fedora 42 base server profile"
+
+      - name: ubuntu2404-base
+        os_family: ubuntu
+        vendor: "Canonical"
+        version: "24.04"
+        arch: "x86_64"
+        kernel_path: "/distros/ubuntu/24.04/vmlinuz"
+        initrd_path: "/distros/ubuntu/24.04/initrd"
+        install_url: "http://mirror.example.com/ubuntu"
+        comment: "Ubuntu 24.04 LTS base server profile"
+
+    hosts_to_provision:
+      - name: web-01
+        mac: "aa:bb:cc:dd:ee:01"
+        profile: fedora42-base
+        hostname: "web-01.example.com"
+        ip_address: "192.168.1.101"
+        netmask: "255.255.255.0"
+        gateway: "192.168.1.1"
+        nameservers: ["8.8.8.8", "8.8.4.4"]
+        comment: "Web server 1"
+
+      - name: web-02
+        mac: "aa:bb:cc:dd:ee:02"
+        profile: fedora42-base
+        hostname: "web-02.example.com"
+        ip_address: "192.168.1.102"
+        netmask: "255.255.255.0"
+        gateway: "192.168.1.1"
+        nameservers: ["8.8.8.8", "8.8.4.4"]
+        comment: "Web server 2"
+
+      - name: db-01
+        mac: "aa:bb:cc:dd:ee:03"
+        profile: ubuntu2404-base
+        hostname: "db-01.example.com"
+        ip_address: "192.168.1.110"
+        netmask: "255.255.255.0"
+        gateway: "192.168.1.1"
+        nameservers: ["8.8.8.8", "8.8.4.4"]
+        comment: "Database server"
+
+  tasks:
+    - name: Verify PxeOS server is reachable
+      ansible.builtin.uri:
+        url: "{{ pxeos_server }}/api/v1/health"
+        method: GET
+        validate_certs: "{{ validate_certs }}"
+        status_code: 200
+      register: health
+      failed_when: health.json.status != "ok"
+
+    - name: Display PxeOS server info
+      ansible.builtin.debug:
+        msg: "PxeOS {{ health.json.version }} - plugins: {{ health.json.plugins | join(', ') }}"
+
+    - name: Create provisioning profiles
+      flossware.pxeos.pxeos_profile:
+        name: "{{ item.name }}"
+        os_family: "{{ item.os_family }}"
+        vendor: "{{ item.vendor }}"
+        version: "{{ item.version }}"
+        arch: "{{ item.arch | default('x86_64') }}"
+        kernel_path: "{{ item.kernel_path | default('') }}"
+        initrd_path: "{{ item.initrd_path | default('') }}"
+        install_url: "{{ item.install_url | default('') }}"
+        comment: "{{ item.comment | default('') }}"
+        server_url: "{{ pxeos_server }}"
+        api_key: "{{ pxeos_api_key }}"
+        validate_certs: "{{ validate_certs }}"
+        state: present
+      loop: "{{ profiles }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Register hosts for provisioning
+      flossware.pxeos.pxeos_host:
+        name: "{{ item.name }}"
+        mac: "{{ item.mac }}"
+        profile: "{{ item.profile | default('') }}"
+        hostname: "{{ item.hostname | default('') }}"
+        ip_address: "{{ item.ip_address | default('') }}"
+        netmask: "{{ item.netmask | default('') }}"
+        gateway: "{{ item.gateway | default('') }}"
+        nameservers: "{{ item.nameservers | default([]) }}"
+        comment: "{{ item.comment | default('') }}"
+        server_url: "{{ pxeos_server }}"
+        api_key: "{{ pxeos_api_key }}"
+        validate_certs: "{{ validate_certs }}"
+        state: present
+      loop: "{{ hosts_to_provision }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.mac }})"
