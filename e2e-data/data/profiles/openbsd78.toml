@@ -16,6 +16,9 @@ interface = "em0"
 dhcp = true
 hostname = "openbsd78-e2e"
 
+[profile.extra]
+boot_iso = "miniroot78.img"
+
 [profile.disk]
 device = "sd0"
 layout = "whole"

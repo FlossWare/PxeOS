@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pxeos.models import BootFirmware, ProvisionProfile
+from pxeos.models import BootFirmware, BootMethod, ProvisionProfile
 from pxeos.plugins.dragonflybsd import DragonFlyBSDPlugin
 
 
@@ -126,21 +126,16 @@ class TestGenerateAutoinstall:
 
 
 class TestBootAssets:
-    def test_has_initrd(
+    def test_bios_fallback_kernel_path(
         self, plugin: DragonFlyBSDPlugin, valid_profile: ProvisionProfile
     ) -> None:
         assets = plugin.boot_assets(valid_profile)
-        assert assets.initrd is not None
-        assert "initrd" in assets.initrd
+        assert assets.kernel == "boot/pxeboot"
+        assert assets.boot_method == BootMethod.KERNEL
 
-    def test_bios_kernel_path(
-        self, plugin: DragonFlyBSDPlugin, valid_profile: ProvisionProfile
+    def test_uefi_fallback_kernel_path(
+        self, plugin: DragonFlyBSDPlugin
     ) -> None:
-        assets = plugin.boot_assets(valid_profile)
-        assert assets.kernel.endswith("/boot/pxeboot")
-        assert "mirror.example.com" in assets.kernel
-
-    def test_uefi_kernel_path(self, plugin: DragonFlyBSDPlugin) -> None:
         profile = ProvisionProfile(
             name="dragonfly-uefi",
             os_family="dragonflybsd",
@@ -150,37 +145,27 @@ class TestBootAssets:
             install_url="http://mirror.example.com/dragonflybsd/6.4",
         )
         assets = plugin.boot_assets(profile)
-        assert assets.kernel.endswith("/boot/loader.efi")
-        assert assets.initrd is not None
+        assert assets.kernel == "boot/loader.efi"
 
-    def test_boot_args_contain_vfs_root(
-        self, plugin: DragonFlyBSDPlugin, valid_profile: ProvisionProfile
-    ) -> None:
-        assets = plugin.boot_assets(valid_profile)
-        assert any(
-            "vfs.root.mountfrom=ufs:/dev/md0" in arg
-            for arg in assets.boot_args
+    def test_memdisk_with_iso(self, plugin: DragonFlyBSDPlugin) -> None:
+        profile = ProvisionProfile(
+            name="dragonfly-server",
+            os_family="dragonflybsd",
+            os_version="6.4",
+            arch="x86_64",
+            install_url="http://mirror.example.com/dragonflybsd/6.4",
+            extra={"boot_iso": "dfly-x86_64-6.4.2_REL.iso"},
         )
+        assets = plugin.boot_assets(profile)
+        assert assets.boot_method == BootMethod.MEMDISK
+        assert assets.kernel == "memdisk"
+        assert assets.initrd == "dfly-x86_64-6.4.2_REL.iso"
 
-    def test_boot_args_contain_nfsroot(
+    def test_no_initrd_in_fallback(
         self, plugin: DragonFlyBSDPlugin, valid_profile: ProvisionProfile
     ) -> None:
         assets = plugin.boot_assets(valid_profile)
-        assert any("boot.nfsroot.server=" in arg for arg in assets.boot_args)
-        assert any("boot.nfsroot.path=" in arg for arg in assets.boot_args)
-
-    def test_boot_args_contain_dragonflybsd_path(
-        self, plugin: DragonFlyBSDPlugin, valid_profile: ProvisionProfile
-    ) -> None:
-        assets = plugin.boot_assets(valid_profile)
-        assert any("dragonflybsd/6.4" in arg for arg in assets.boot_args)
-
-    def test_bootloader_config_contains_comment(
-        self, plugin: DragonFlyBSDPlugin, valid_profile: ProvisionProfile
-    ) -> None:
-        assets = plugin.boot_assets(valid_profile)
-        assert "DragonFlyBSD" in assets.bootloader_config
-        assert "6.4" in assets.bootloader_config
+        assert assets.initrd is None
 
 
 class TestValidateProfile:

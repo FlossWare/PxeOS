@@ -13,6 +13,9 @@ post_scripts = [
     "curl -X POST http://192.168.200.1:8880/api/v1/provision/52:54:00:e2:e0:05/disable-netboot || true",
 ]
 
+[profile.extra]
+boot_iso = "FreeBSD-15.0-RELEASE-amd64-bootonly.iso"
+
 [profile.network]
 interface = "em0"
 dhcp = true

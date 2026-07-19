@@ -13,6 +13,12 @@ class BootFirmware(enum.Enum):
     UEFI = "uefi"
 
 
+class BootMethod(enum.Enum):
+    KERNEL = "kernel"
+    SANBOOT = "sanboot"
+    MEMDISK = "memdisk"
+
+
 @dataclass
 class ProvisionProfile:
     name: str
@@ -38,6 +44,7 @@ class BootAssets:
     initrd: Optional[str] = None
     boot_args: tuple[str, ...] = ()
     bootloader_config: str = ""
+    boot_method: BootMethod = BootMethod.KERNEL
 
 
 @dataclass

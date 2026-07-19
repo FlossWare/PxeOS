@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pxeos.models import BootFirmware, ProvisionProfile
+from pxeos.models import BootFirmware, BootMethod, ProvisionProfile
 from pxeos.plugins.netbsd import NetBSDPlugin
 
 
@@ -92,46 +92,33 @@ class TestGenerateAutoinstall:
 
 
 class TestBootAssets:
-    def test_bios_kernel_path(
+    def test_kernel_is_install_gz(
         self, plugin: NetBSDPlugin, valid_profile: ProvisionProfile
     ) -> None:
         assets = plugin.boot_assets(valid_profile)
-        assert "pxeboot_ia32.bin" in assets.kernel
-        assert "10.0" in assets.kernel
+        assert "netbsd-INSTALL.gz" in assets.kernel
         assert "amd64" in assets.kernel
+        assert assets.boot_method == BootMethod.KERNEL
 
-    def test_initrd_is_not_none(
-        self, plugin: NetBSDPlugin, valid_profile: ProvisionProfile
-    ) -> None:
-        """NetBSD does use an initrd, unlike FreeBSD/OpenBSD."""
-        assets = plugin.boot_assets(valid_profile)
-        assert assets.initrd is not None
-        assert "netbsd-INSTALL.gz" in assets.initrd
-
-    def test_boot_args_contain_root(
+    def test_no_initrd(
         self, plugin: NetBSDPlugin, valid_profile: ProvisionProfile
     ) -> None:
         assets = plugin.boot_assets(valid_profile)
-        assert any("root=" in arg for arg in assets.boot_args)
+        assert assets.initrd is None
 
-    def test_uefi_kernel_path(self, plugin: NetBSDPlugin) -> None:
+    def test_memdisk_with_iso(self, plugin: NetBSDPlugin) -> None:
         profile = ProvisionProfile(
-            name="netbsd-uefi",
+            name="netbsd-box",
             os_family="netbsd",
             os_version="10.0",
             arch="amd64",
-            firmware=BootFirmware.UEFI,
             install_url="http://cdn.netbsd.org/pub/NetBSD",
+            extra={"boot_iso": "NetBSD-10.0-amd64.iso"},
         )
         assets = plugin.boot_assets(profile)
-        assert "XEN3_DOMU" in assets.kernel or "netboot" in assets.kernel
-
-    def test_bootloader_config_contains_comment(
-        self, plugin: NetBSDPlugin, valid_profile: ProvisionProfile
-    ) -> None:
-        assets = plugin.boot_assets(valid_profile)
-        assert "NetBSD" in assets.bootloader_config
-        assert "10.0" in assets.bootloader_config
+        assert assets.boot_method == BootMethod.MEMDISK
+        assert assets.kernel == "memdisk"
+        assert assets.initrd == "NetBSD-10.0-amd64.iso"
 
 
 class TestValidateProfile:

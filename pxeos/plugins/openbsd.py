@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from pxeos.models import (
     BootAssets,
     BootFirmware,
+    BootMethod,
     DistroAssets,
     ProvisionProfile,
 )
@@ -128,41 +129,20 @@ class OpenBSDPlugin(OSPlugin):
     def boot_assets(
         self, profile: ProvisionProfile
     ) -> BootAssets:
-        base = profile.install_url.rstrip("/")
-        version = profile.os_version
-        arch = profile.arch or "amd64"
-
-        # OpenBSD PXE boots bsd.rd which is both kernel
-        # and installer ramdisk combined.
-        kernel = f"{base}/{version}/{arch}/bsd.rd"
-
-        if profile.firmware == BootFirmware.UEFI:
-            boot_args = (
-                f"tftproot={base}/{version}/{arch}/",
-            )
-            config = (
-                f"# OpenBSD {version} UEFI PXE boot\n"
-                f"# DHCP must serve bsd.rd as boot file\n"
-                f"# autoinstall fetches install.conf "
-                f"via HTTP from next-server\n"
-            )
-        else:
-            boot_args = (
-                f"tftproot={base}/{version}/{arch}/",
-            )
-            config = (
-                f"# OpenBSD {version} BIOS PXE boot\n"
-                f"# DHCP option next-server points to "
-                f"TFTP with bsd.rd\n"
-                f"# autoinstall(8) fetches "
-                f"http://SERVER_IP/install.conf\n"
+        boot_iso = profile.extra.get("boot_iso")
+        if boot_iso:
+            is_raw = not boot_iso.endswith(".iso")
+            return BootAssets(
+                kernel="memdisk",
+                initrd=boot_iso,
+                boot_args=("raw",) if is_raw else (),
+                boot_method=BootMethod.MEMDISK,
             )
 
         return BootAssets(
-            kernel=kernel,
+            kernel="bsd.rd",
             initrd=None,
-            boot_args=boot_args,
-            bootloader_config=config,
+            boot_args=(),
         )
 
     def validate_profile(

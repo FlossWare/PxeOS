@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pxeos.models import BootFirmware, ProvisionProfile
+from pxeos.models import BootFirmware, BootMethod, ProvisionProfile
 from pxeos.plugins.openbsd import OpenBSDPlugin
 
 
@@ -91,18 +91,12 @@ class TestGenerateAutoinstall:
 
 
 class TestBootAssets:
-    def test_kernel_path_contains_bsd_rd(
+    def test_kernel_is_bsd_rd(
         self, plugin: OpenBSDPlugin, valid_profile: ProvisionProfile
     ) -> None:
         assets = plugin.boot_assets(valid_profile)
-        assert "bsd.rd" in assets.kernel
-
-    def test_kernel_path_contains_version_and_arch(
-        self, plugin: OpenBSDPlugin, valid_profile: ProvisionProfile
-    ) -> None:
-        assets = plugin.boot_assets(valid_profile)
-        assert "7.6" in assets.kernel
-        assert "amd64" in assets.kernel
+        assert assets.kernel == "bsd.rd"
+        assert assets.boot_method == BootMethod.KERNEL
 
     def test_no_initrd(
         self, plugin: OpenBSDPlugin, valid_profile: ProvisionProfile
@@ -110,17 +104,19 @@ class TestBootAssets:
         assets = plugin.boot_assets(valid_profile)
         assert assets.initrd is None
 
-    def test_boot_args_contain_tftproot(
-        self, plugin: OpenBSDPlugin, valid_profile: ProvisionProfile
-    ) -> None:
-        assets = plugin.boot_assets(valid_profile)
-        assert any("tftproot=" in arg for arg in assets.boot_args)
-
-    def test_bootloader_config_contains_comment(
-        self, plugin: OpenBSDPlugin, valid_profile: ProvisionProfile
-    ) -> None:
-        assets = plugin.boot_assets(valid_profile)
-        assert "OpenBSD" in assets.bootloader_config
+    def test_memdisk_with_iso(self, plugin: OpenBSDPlugin) -> None:
+        profile = ProvisionProfile(
+            name="openbsd-fw",
+            os_family="openbsd",
+            os_version="7.6",
+            arch="amd64",
+            install_url="http://cdn.openbsd.org/pub/OpenBSD",
+            extra={"boot_iso": "install76.iso"},
+        )
+        assets = plugin.boot_assets(profile)
+        assert assets.boot_method == BootMethod.MEMDISK
+        assert assets.kernel == "memdisk"
+        assert assets.initrd == "install76.iso"
 
 
 class TestValidateProfile:

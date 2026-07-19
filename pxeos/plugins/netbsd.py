@@ -8,6 +8,7 @@ from pathlib import Path
 from pxeos.models import (
     BootAssets,
     BootFirmware,
+    BootMethod,
     DistroAssets,
     ProvisionProfile,
 )
@@ -114,58 +115,24 @@ class NetBSDPlugin(OSPlugin):
     def boot_assets(
         self, profile: ProvisionProfile
     ) -> BootAssets:
-        base = profile.install_url.rstrip("/")
-        version = profile.os_version
+        boot_iso = profile.extra.get("boot_iso")
+        if boot_iso:
+            is_raw = not boot_iso.endswith(".iso")
+            return BootAssets(
+                kernel="memdisk",
+                initrd=boot_iso,
+                boot_args=("raw",) if is_raw else (),
+                boot_method=BootMethod.MEMDISK,
+            )
+
         arch = profile.arch or "amd64"
-
-        if profile.firmware == BootFirmware.UEFI:
-            kernel = (
-                f"{base}/NetBSD-{version}/{arch}/"
-                f"installation/netboot/"
-                f"netbsd-INSTALL_XEN3_DOMU.gz"
-            )
-            boot_args = (
-                f"root=http={base}/NetBSD-{version}/"
-                f"{arch}/binary/sets/",
-                "console=com0",
-            )
-            config = (
-                f"# NetBSD {version} UEFI PXE boot\n"
-                f"# Serve netboot kernel via TFTP\n"
-                f"# sysinst fetches sets from "
-                f"install_url\n"
-            )
-        else:
-            kernel = (
-                f"{base}/NetBSD-{version}/{arch}/"
-                f"installation/netboot/"
-                f"pxeboot_ia32.bin"
-            )
-            boot_args = (
-                f"root=http={base}/NetBSD-{version}/"
-                f"{arch}/binary/sets/",
-                "console=com0",
-            )
-            config = (
-                f"# NetBSD {version} BIOS PXE boot\n"
-                f"# pxeboot_ia32.bin loads the NetBSD "
-                f"kernel\n"
-                f"# sysinst uses auto_install.cfg for "
-                f"unattended install\n"
-            )
-
-        # NetBSD does use an installer ramdisk
-        initrd = (
-            f"{base}/NetBSD-{version}/{arch}/"
-            f"installation/netboot/"
-            f"netbsd-INSTALL.gz"
-        )
-
         return BootAssets(
-            kernel=kernel,
-            initrd=initrd,
-            boot_args=boot_args,
-            bootloader_config=config,
+            kernel=(
+                f"{arch}/binary/kernel/"
+                f"netbsd-INSTALL.gz"
+            ),
+            initrd=None,
+            boot_args=(),
         )
 
     def validate_profile(

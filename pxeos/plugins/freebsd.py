@@ -8,6 +8,7 @@ from pathlib import Path
 from pxeos.models import (
     BootAssets,
     BootFirmware,
+    BootMethod,
     DistroAssets,
     ProvisionProfile,
 )
@@ -93,39 +94,27 @@ class FreeBSDPlugin(OSPlugin):
     def boot_assets(
         self, profile: ProvisionProfile
     ) -> BootAssets:
-        base = profile.install_url.rstrip("/")
-        version = profile.os_version
-        arch = profile.arch or "amd64"
+        boot_iso = profile.extra.get("boot_iso")
+        if boot_iso:
+            is_raw = not boot_iso.endswith(".iso")
+            return BootAssets(
+                kernel="memdisk",
+                initrd=boot_iso,
+                boot_args=("raw",) if is_raw else (),
+                boot_method=BootMethod.MEMDISK,
+            )
 
+        # Fallback: traditional pxeboot/loader.efi — only
+        # works when a TFTP server chainloads these binaries.
+        # iPXE HTTP cannot boot BSD pxeboot directly.
         if profile.firmware == BootFirmware.UEFI:
-            kernel = f"{base}/boot/loader.efi"
-            boot_args = (
-                f"boot.nfsroot.server={base}",
-                f"boot.nfsroot.path=/freebsd/{version}/{arch}",
-            )
-            config = (
-                f"# FreeBSD {version} UEFI PXE boot\n"
-                f"set boot_verbose\n"
-                f'set kernel="kernel"\n'
-                f'set autoboot_delay="3"\n'
-            )
+            kernel = "boot/loader.efi"
         else:
-            kernel = f"{base}/boot/pxeboot"
-            boot_args = (
-                f"boot.nfsroot.server={base}",
-                f"boot.nfsroot.path=/freebsd/{version}/{arch}",
-            )
-            config = (
-                f"# FreeBSD {version} BIOS PXE boot\n"
-                f'set kernel="kernel"\n'
-                f'set autoboot_delay="3"\n'
-            )
+            kernel = "boot/pxeboot"
 
         return BootAssets(
             kernel=kernel,
-            initrd=None,
-            boot_args=boot_args,
-            bootloader_config=config,
+            boot_args=(),
         )
 
     def validate_profile(

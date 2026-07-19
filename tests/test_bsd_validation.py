@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from pxeos.models import BootFirmware, ProvisionProfile
+from pxeos.models import BootFirmware, BootMethod, ProvisionProfile
 from pxeos.plugins.dragonflybsd import DragonFlyBSDPlugin
 from pxeos.plugins.freebsd import FreeBSDPlugin
 from pxeos.plugins.netbsd import NetBSDPlugin
@@ -278,38 +278,28 @@ class TestFreeBSDBootArgs:
     def plugin(self) -> FreeBSDPlugin:
         return FreeBSDPlugin()
 
-    def test_bios_kernel_pxeboot(self, plugin: FreeBSDPlugin) -> None:
+    def test_bios_fallback_kernel(self, plugin: FreeBSDPlugin) -> None:
         profile = _fbsd(firmware=BootFirmware.BIOS)
         assets = plugin.boot_assets(profile)
-        assert assets.kernel.endswith("/boot/pxeboot")
+        assert assets.kernel == "boot/pxeboot"
+        assert assets.boot_method == BootMethod.KERNEL
 
-    def test_uefi_kernel_loader_efi(self, plugin: FreeBSDPlugin) -> None:
+    def test_uefi_fallback_kernel(self, plugin: FreeBSDPlugin) -> None:
         profile = _fbsd(firmware=BootFirmware.UEFI)
         assets = plugin.boot_assets(profile)
-        assert assets.kernel.endswith("/boot/loader.efi")
+        assert assets.kernel == "boot/loader.efi"
 
     def test_no_initrd(self, plugin: FreeBSDPlugin) -> None:
         profile = _fbsd()
         assets = plugin.boot_assets(profile)
         assert assets.initrd is None
 
-    def test_nfsroot_args(self, plugin: FreeBSDPlugin) -> None:
-        profile = _fbsd()
+    def test_memdisk_with_boot_iso(self, plugin: FreeBSDPlugin) -> None:
+        profile = _fbsd(extra={"boot_iso": "FreeBSD-14.1-bootonly.iso"})
         assets = plugin.boot_assets(profile)
-        assert any("boot.nfsroot.server=" in a for a in assets.boot_args)
-        assert any("boot.nfsroot.path=" in a for a in assets.boot_args)
-
-    def test_nfsroot_path_includes_version_and_arch(self, plugin: FreeBSDPlugin) -> None:
-        profile = _fbsd(os_version="14.2", arch="amd64")
-        assets = plugin.boot_assets(profile)
-        nfs_path = [a for a in assets.boot_args if "nfsroot.path=" in a][0]
-        assert "14.2" in nfs_path
-        assert "amd64" in nfs_path
-
-    def test_bootloader_config_mentions_version(self, plugin: FreeBSDPlugin) -> None:
-        profile = _fbsd(os_version="13.4")
-        assets = plugin.boot_assets(profile)
-        assert "13.4" in assets.bootloader_config
+        assert assets.boot_method == BootMethod.MEMDISK
+        assert assets.kernel == "memdisk"
+        assert assets.initrd == "FreeBSD-14.1-bootonly.iso"
 
     def test_all_versions_valid(self, plugin: FreeBSDPlugin) -> None:
         for v in plugin.supported_versions:
@@ -670,7 +660,8 @@ class TestOpenBSDBootAssets:
     def test_kernel_is_bsd_rd(self, plugin: OpenBSDPlugin) -> None:
         profile = _obsd()
         assets = plugin.boot_assets(profile)
-        assert "bsd.rd" in assets.kernel
+        assert assets.kernel == "bsd.rd"
+        assert assets.boot_method == BootMethod.KERNEL
 
     def test_no_initrd(self, plugin: OpenBSDPlugin) -> None:
         """bsd.rd combines kernel and ramdisk; no separate initrd."""
@@ -678,31 +669,18 @@ class TestOpenBSDBootAssets:
         assets = plugin.boot_assets(profile)
         assert assets.initrd is None
 
-    def test_kernel_path_includes_version_and_arch(self, plugin: OpenBSDPlugin) -> None:
-        profile = _obsd(os_version="7.5", arch="amd64")
-        assets = plugin.boot_assets(profile)
-        assert "7.5/amd64/bsd.rd" in assets.kernel
-
-    def test_tftproot_in_boot_args(self, plugin: OpenBSDPlugin) -> None:
-        profile = _obsd()
-        assets = plugin.boot_assets(profile)
-        assert any("tftproot=" in a for a in assets.boot_args)
-
     def test_bios_vs_uefi_same_kernel(self, plugin: OpenBSDPlugin) -> None:
         """OpenBSD uses bsd.rd for both BIOS and UEFI boot."""
         bios = plugin.boot_assets(_obsd(firmware=BootFirmware.BIOS))
         uefi = plugin.boot_assets(_obsd(firmware=BootFirmware.UEFI))
         assert bios.kernel == uefi.kernel
 
-    def test_bootloader_config_bios(self, plugin: OpenBSDPlugin) -> None:
-        profile = _obsd(firmware=BootFirmware.BIOS)
+    def test_memdisk_with_boot_iso(self, plugin: OpenBSDPlugin) -> None:
+        profile = _obsd(extra={"boot_iso": "install76.iso"})
         assets = plugin.boot_assets(profile)
-        assert "BIOS" in assets.bootloader_config
-
-    def test_bootloader_config_uefi(self, plugin: OpenBSDPlugin) -> None:
-        profile = _obsd(firmware=BootFirmware.UEFI)
-        assets = plugin.boot_assets(profile)
-        assert "UEFI" in assets.bootloader_config
+        assert assets.boot_method == BootMethod.MEMDISK
+        assert assets.kernel == "memdisk"
+        assert assets.initrd == "install76.iso"
 
 
 class TestOpenBSDValidation:
@@ -994,44 +972,24 @@ class TestNetBSDBootAssets:
     def plugin(self) -> NetBSDPlugin:
         return NetBSDPlugin()
 
-    def test_bios_kernel_path(self, plugin: NetBSDPlugin) -> None:
-        profile = _nbsd(firmware=BootFirmware.BIOS)
+    def test_kernel_is_install_gz(self, plugin: NetBSDPlugin) -> None:
+        profile = _nbsd()
         assets = plugin.boot_assets(profile)
-        assert "pxeboot_ia32.bin" in assets.kernel
-        assert "10.0" in assets.kernel
+        assert "netbsd-INSTALL.gz" in assets.kernel
         assert "amd64" in assets.kernel
+        assert assets.boot_method == BootMethod.KERNEL
 
-    def test_uefi_kernel_path(self, plugin: NetBSDPlugin) -> None:
-        profile = _nbsd(firmware=BootFirmware.UEFI)
-        assets = plugin.boot_assets(profile)
-        assert "XEN3_DOMU" in assets.kernel or "netboot" in assets.kernel
-
-    def test_initrd_present(self, plugin: NetBSDPlugin) -> None:
-        """NetBSD uses a separate installer ramdisk unlike FreeBSD/OpenBSD."""
+    def test_no_initrd(self, plugin: NetBSDPlugin) -> None:
         profile = _nbsd()
         assets = plugin.boot_assets(profile)
-        assert assets.initrd is not None
-        assert "netbsd-INSTALL.gz" in assets.initrd
+        assert assets.initrd is None
 
-    def test_boot_args_contain_root(self, plugin: NetBSDPlugin) -> None:
-        profile = _nbsd()
+    def test_memdisk_with_boot_iso(self, plugin: NetBSDPlugin) -> None:
+        profile = _nbsd(extra={"boot_iso": "NetBSD-10.0-amd64.iso"})
         assets = plugin.boot_assets(profile)
-        assert any("root=" in a for a in assets.boot_args)
-
-    def test_boot_args_contain_console(self, plugin: NetBSDPlugin) -> None:
-        profile = _nbsd()
-        assets = plugin.boot_assets(profile)
-        assert any("console=com0" in a for a in assets.boot_args)
-
-    def test_initrd_includes_version(self, plugin: NetBSDPlugin) -> None:
-        profile = _nbsd(os_version="9.4")
-        assets = plugin.boot_assets(profile)
-        assert "9.4" in assets.initrd
-
-    def test_bootloader_config_mentions_version(self, plugin: NetBSDPlugin) -> None:
-        profile = _nbsd(os_version="10.1")
-        assets = plugin.boot_assets(profile)
-        assert "10.1" in assets.bootloader_config
+        assert assets.boot_method == BootMethod.MEMDISK
+        assert assets.kernel == "memdisk"
+        assert assets.initrd == "NetBSD-10.0-amd64.iso"
 
 
 class TestNetBSDValidation:
@@ -1252,43 +1210,34 @@ class TestDragonFlyBSDNetwork:
 
 
 class TestDragonFlyBSDBootArgs:
-    """Verify DragonFlyBSD boot args include vfs.root.mountfrom."""
+    """Verify DragonFlyBSD boot assets."""
 
     @pytest.fixture
     def plugin(self) -> DragonFlyBSDPlugin:
         return DragonFlyBSDPlugin()
 
-    def test_vfs_root_mountfrom(self, plugin: DragonFlyBSDPlugin) -> None:
-        profile = _dbsd()
-        assets = plugin.boot_assets(profile)
-        assert any("vfs.root.mountfrom=ufs:/dev/md0" in a for a in assets.boot_args)
-
-    def test_nfsroot_args(self, plugin: DragonFlyBSDPlugin) -> None:
-        profile = _dbsd()
-        assets = plugin.boot_assets(profile)
-        assert any("boot.nfsroot.server=" in a for a in assets.boot_args)
-        assert any("boot.nfsroot.path=" in a for a in assets.boot_args)
-
-    def test_has_initrd(self, plugin: DragonFlyBSDPlugin) -> None:
-        profile = _dbsd()
-        assets = plugin.boot_assets(profile)
-        assert assets.initrd is not None
-        assert "initrd" in assets.initrd
-
-    def test_bios_kernel_pxeboot(self, plugin: DragonFlyBSDPlugin) -> None:
+    def test_bios_fallback_kernel(self, plugin: DragonFlyBSDPlugin) -> None:
         profile = _dbsd(firmware=BootFirmware.BIOS)
         assets = plugin.boot_assets(profile)
-        assert assets.kernel.endswith("/boot/pxeboot")
+        assert assets.kernel == "boot/pxeboot"
+        assert assets.boot_method == BootMethod.KERNEL
 
-    def test_uefi_kernel_loader(self, plugin: DragonFlyBSDPlugin) -> None:
+    def test_uefi_fallback_kernel(self, plugin: DragonFlyBSDPlugin) -> None:
         profile = _dbsd(firmware=BootFirmware.UEFI)
         assets = plugin.boot_assets(profile)
-        assert assets.kernel.endswith("/boot/loader.efi")
+        assert assets.kernel == "boot/loader.efi"
 
-    def test_nfsroot_path_dragonflybsd(self, plugin: DragonFlyBSDPlugin) -> None:
-        profile = _dbsd(os_version="6.4", arch="x86_64")
+    def test_memdisk_with_boot_iso(self, plugin: DragonFlyBSDPlugin) -> None:
+        profile = _dbsd(extra={"boot_iso": "dfly-x86_64-6.4.2_REL.iso"})
         assets = plugin.boot_assets(profile)
-        assert any("dragonflybsd/6.4/x86_64" in a for a in assets.boot_args)
+        assert assets.boot_method == BootMethod.MEMDISK
+        assert assets.kernel == "memdisk"
+        assert assets.initrd == "dfly-x86_64-6.4.2_REL.iso"
+
+    def test_no_initrd_in_fallback(self, plugin: DragonFlyBSDPlugin) -> None:
+        profile = _dbsd()
+        assets = plugin.boot_assets(profile)
+        assert assets.initrd is None
 
 
 class TestDragonFlyBSDURLValidation:
@@ -1441,12 +1390,12 @@ class TestCrossBSDComparisons:
         assert fb.initrd is None
         assert ob.initrd is None
 
-    def test_netbsd_and_dragonfly_have_initrd(self) -> None:
-        """NetBSD and DragonFlyBSD do use an initrd."""
+    def test_all_bsd_no_initrd(self) -> None:
+        """All BSDs now boot without separate initrd (kernel-only or sanboot)."""
         nb = NetBSDPlugin().boot_assets(_nbsd())
         db = DragonFlyBSDPlugin().boot_assets(_dbsd())
-        assert nb.initrd is not None
-        assert db.initrd is not None
+        assert nb.initrd is None
+        assert db.initrd is None
 
     def test_all_bsd_installers_shell_or_conf(self) -> None:
         """FreeBSD and DragonFlyBSD use shell scripts; OpenBSD/NetBSD use config files."""

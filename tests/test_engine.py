@@ -10,7 +10,7 @@ import pytest
 from pxeos.config import PxeOSConfig
 from pxeos.engine import ProvisioningEngine
 from pxeos.matcher import HostMatcher
-from pxeos.models import BootAssets, BootFirmware, HostRule, ProvisionProfile
+from pxeos.models import BootAssets, BootFirmware, BootMethod, HostRule, ProvisionProfile
 from pxeos.registry import PluginRegistry
 
 
@@ -152,6 +152,54 @@ class TestRenderIpxeScript:
         script = engine.render_ipxe_script(mac="aa:bb:cc:dd:ee:ff")
 
         assert "initrd" not in script
+
+    def test_sanboot_method_generates_sanboot_command(self):
+        rule = _rule(os_family="freebsd")
+        assets = BootAssets(
+            kernel="FreeBSD-15.0-bootonly.iso",
+            boot_method=BootMethod.SANBOOT,
+        )
+
+        plugin = MagicMock()
+        plugin.validate_profile.return_value = []
+        plugin.boot_assets.return_value = assets
+
+        engine, _, _ = _build_engine(
+            matcher_return=rule, plugin=plugin
+        )
+
+        script = engine.render_ipxe_script(mac="aa:bb:cc:dd:ee:ff")
+
+        assert script.startswith("#!ipxe")
+        assert "sanboot" in script
+        assert "kernel " not in script
+        assert "boot\n" not in script.split("sanboot")[0]
+
+    def test_memdisk_method_generates_memdisk_commands(self):
+        rule = _rule(os_family="freebsd")
+        assets = BootAssets(
+            kernel="memdisk",
+            initrd="FreeBSD-15.0-bootonly.iso",
+            boot_method=BootMethod.MEMDISK,
+        )
+
+        plugin = MagicMock()
+        plugin.validate_profile.return_value = []
+        plugin.boot_assets.return_value = assets
+
+        engine, _, _ = _build_engine(
+            matcher_return=rule, plugin=plugin
+        )
+
+        script = engine.render_ipxe_script(mac="aa:bb:cc:dd:ee:ff")
+
+        assert script.startswith("#!ipxe")
+        lines = script.strip().split("\n")
+        non_empty = [l for l in lines if l.strip()]
+        assert any("initrd" in l for l in non_empty)
+        assert any("kernel" in l and "memdisk" in l for l in non_empty)
+        assert any("imgargs memdisk iso raw" in l for l in non_empty)
+        assert "boot" in non_empty[-1]
 
 
 # ---- get_autoinstall ----

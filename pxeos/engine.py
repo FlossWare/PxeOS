@@ -15,7 +15,7 @@ from pxeos.cache import (
 )
 from pxeos.config import PxeOSConfig, load_profile
 from pxeos.matcher import HostMatcher
-from pxeos.models import BootAssets, HostRule, ProvisionProfile
+from pxeos.models import BootAssets, BootMethod, HostRule, ProvisionProfile
 from pxeos.registry import PluginRegistry
 from pxeos.state import ProvisionState, ProvisionTracker
 
@@ -200,8 +200,8 @@ class ProvisioningEngine:
         if profile.dhcp_options:
             lines.append("")
 
-        kernel_url = assets.kernel
-        initrd_url = assets.initrd
+        kernel_url = assets.kernel.replace("\n", "").replace("\r", "")
+        initrd_url = assets.initrd.replace("\n", "").replace("\r", "") if assets.initrd else None
         if profile.install_url:
             base = profile.install_url.rstrip("/")
             if not kernel_url.startswith(("http://", "https://")):
@@ -209,42 +209,55 @@ class ProvisioningEngine:
             if initrd_url and not initrd_url.startswith(("http://", "https://")):
                 initrd_url = f"{base}/{initrd_url.lstrip('/')}"
 
-        args = list(assets.boot_args)
+        if assets.boot_method == BootMethod.SANBOOT:
+            lines.append(f"sanboot {kernel_url}")
+        elif assets.boot_method == BootMethod.MEMDISK:
+            if initrd_url:
+                lines.append(f"initrd {initrd_url}")
+            lines.append(f"kernel {kernel_url}")
+            memdisk_args = " ".join(
+                a.replace("\n", "").replace("\r", "") for a in assets.boot_args
+            ) if assets.boot_args else "iso raw"
+            lines.append(f"imgargs memdisk {memdisk_args}")
+            lines.append("boot")
+        else:
+            args = list(assets.boot_args)
 
-        kernel_line = f"kernel {kernel_url}"
-        if args:
-            kernel_line += " " + " ".join(args)
-        lines.append(kernel_line)
-        if initrd_url:
-            lines.append(f"initrd {initrd_url}")
+            kernel_line = f"kernel {kernel_url}"
+            if args:
+                kernel_line += " " + " ".join(args)
+            lines.append(kernel_line)
+            if initrd_url:
+                lines.append(f"initrd {initrd_url}")
 
-        # Inject custom iPXE commands before boot, with
-        # variable substitution.
-        if profile.ipxe_commands:
-            hostname = profile.network.get(
-                "hostname", profile.name
-            )
-            subst_vars = {
-                "mac": mac,
-                "hostname": hostname,
-                "profile": profile.name,
-                "os_family": profile.os_family,
-                "os_version": profile.os_version,
-                "arch": profile.arch,
-                "vendor": profile.vendor,
-            }
-            for cmd in profile.ipxe_commands:
-                if not _validate_ipxe_command(cmd):
-                    logger.warning(
-                        "Skipping unsafe iPXE command: %s",
-                        cmd,
-                    )
-                    continue
-                lines.append(
-                    _substitute_ipxe_vars(cmd, subst_vars)
+            # Inject custom iPXE commands before boot, with
+            # variable substitution.
+            if profile.ipxe_commands:
+                hostname = profile.network.get(
+                    "hostname", profile.name
                 )
+                subst_vars = {
+                    "mac": mac,
+                    "hostname": hostname,
+                    "profile": profile.name,
+                    "os_family": profile.os_family,
+                    "os_version": profile.os_version,
+                    "arch": profile.arch,
+                    "vendor": profile.vendor,
+                }
+                for cmd in profile.ipxe_commands:
+                    if not _validate_ipxe_command(cmd):
+                        logger.warning(
+                            "Skipping unsafe iPXE command: %s",
+                            cmd,
+                        )
+                        continue
+                    lines.append(
+                        _substitute_ipxe_vars(cmd, subst_vars)
+                    )
 
-        lines.append("boot")
+            lines.append("boot")
+
         lines.append("")
 
         script = "\n".join(lines)

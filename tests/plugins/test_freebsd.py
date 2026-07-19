@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pxeos.models import BootFirmware, ProvisionProfile
+from pxeos.models import BootFirmware, BootMethod, ProvisionProfile
 from pxeos.plugins.freebsd import FreeBSDPlugin
 
 
@@ -99,20 +99,14 @@ class TestGenerateAutoinstall:
 
 
 class TestBootAssets:
-    def test_no_initrd(
+    def test_bios_fallback_kernel_path(
         self, plugin: FreeBSDPlugin, valid_profile: ProvisionProfile
     ) -> None:
         assets = plugin.boot_assets(valid_profile)
-        assert assets.initrd is None
+        assert assets.kernel == "boot/pxeboot"
+        assert assets.boot_method == BootMethod.KERNEL
 
-    def test_bios_kernel_path(
-        self, plugin: FreeBSDPlugin, valid_profile: ProvisionProfile
-    ) -> None:
-        assets = plugin.boot_assets(valid_profile)
-        assert assets.kernel.endswith("/boot/pxeboot")
-        assert "mirror.example.com" in assets.kernel
-
-    def test_uefi_kernel_path(self, plugin: FreeBSDPlugin) -> None:
+    def test_uefi_fallback_kernel_path(self, plugin: FreeBSDPlugin) -> None:
         profile = ProvisionProfile(
             name="freebsd-uefi",
             os_family="freebsd",
@@ -122,22 +116,27 @@ class TestBootAssets:
             install_url="http://mirror.example.com/freebsd/14.1",
         )
         assets = plugin.boot_assets(profile)
-        assert assets.kernel.endswith("/boot/loader.efi")
+        assert assets.kernel == "boot/loader.efi"
+
+    def test_memdisk_with_iso(self, plugin: FreeBSDPlugin) -> None:
+        profile = ProvisionProfile(
+            name="freebsd-server",
+            os_family="freebsd",
+            os_version="14.1",
+            arch="amd64",
+            install_url="http://mirror.example.com/freebsd/14.1",
+            extra={"boot_iso": "FreeBSD-14.1-RELEASE-amd64-bootonly.iso"},
+        )
+        assets = plugin.boot_assets(profile)
+        assert assets.boot_method == BootMethod.MEMDISK
+        assert assets.kernel == "memdisk"
+        assert assets.initrd == "FreeBSD-14.1-RELEASE-amd64-bootonly.iso"
+
+    def test_no_initrd(
+        self, plugin: FreeBSDPlugin, valid_profile: ProvisionProfile
+    ) -> None:
+        assets = plugin.boot_assets(valid_profile)
         assert assets.initrd is None
-
-    def test_boot_args_contain_nfsroot(
-        self, plugin: FreeBSDPlugin, valid_profile: ProvisionProfile
-    ) -> None:
-        assets = plugin.boot_assets(valid_profile)
-        assert any("boot.nfsroot.server=" in arg for arg in assets.boot_args)
-        assert any("boot.nfsroot.path=" in arg for arg in assets.boot_args)
-
-    def test_bootloader_config_contains_comment(
-        self, plugin: FreeBSDPlugin, valid_profile: ProvisionProfile
-    ) -> None:
-        assets = plugin.boot_assets(valid_profile)
-        assert "FreeBSD" in assets.bootloader_config
-        assert "14.1" in assets.bootloader_config
 
 
 class TestValidateProfile:
