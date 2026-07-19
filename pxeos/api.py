@@ -18,6 +18,7 @@ from starlette.middleware.base import (
     RequestResponseEndpoint,
 )
 
+from pxeos.audit import AuditEvent, get_audit_logger, init_audit
 from pxeos.config import PxeOSConfig, load_hosts
 from pxeos.engine import ProvisioningEngine
 from pxeos.errors import (
@@ -203,6 +204,9 @@ def init_app(
     _config = config
     _engine = ProvisioningEngine(registry, matcher, config)
 
+    # Initialize audit logging
+    init_audit(config.audit)
+
     key_store = ApiKeyStore(config.data_dir)
     init_auth(config.auth_enabled, key_store)
 
@@ -268,13 +272,17 @@ def _validate_mac_param(mac: str) -> str:
 
 
 @app.get("/api/v1/boot/{mac}")
-def get_boot_script(mac: str) -> Response:
+def get_boot_script(mac: str, request: Request) -> Response:
     if _engine is None:
         raise HTTPException(503, "engine not initialized")
     mac = _validate_mac_param(mac)
+    client_ip = request.client.host if request.client else None
     logger.info("Boot script requested mac=%s", mac)
     try:
         script = _engine.render_ipxe_script(mac)
+        get_audit_logger().log_boot_request(
+            mac=mac, client_ip=client_ip,
+        )
         return Response(
             content=script, media_type="text/plain"
         )
@@ -297,12 +305,16 @@ class NetbootStatusResponse(BaseModel):
     "/api/v1/provision/{mac}/disable-netboot",
     dependencies=[Depends(require_role(Role.OPERATOR))],
 )
-def disable_netboot(mac: str) -> Dict[str, Any]:
+def disable_netboot(mac: str, request: Request) -> Dict[str, Any]:
     """Disable PXE netboot for a MAC (boot-once: after successful provisioning)."""
     if _engine is None:
         raise HTTPException(503, "engine not initialized")
     try:
         record = _engine.tracker.disable_netboot(mac)
+        client_ip = request.client.host if request.client else None
+        get_audit_logger().log_netboot_change(
+            mac=mac, enabled=False, client_ip=client_ip,
+        )
         return {
             "mac": record.mac,
             "netboot_enabled": record.netboot_enabled,
@@ -316,12 +328,16 @@ def disable_netboot(mac: str) -> Dict[str, Any]:
     "/api/v1/provision/{mac}/enable-netboot",
     dependencies=[Depends(require_role(Role.OPERATOR))],
 )
-def enable_netboot(mac: str) -> Dict[str, Any]:
+def enable_netboot(mac: str, request: Request) -> Dict[str, Any]:
     """Re-enable PXE netboot for a MAC (for re-provisioning)."""
     if _engine is None:
         raise HTTPException(503, "engine not initialized")
     try:
         record = _engine.tracker.enable_netboot(mac)
+        client_ip = request.client.host if request.client else None
+        get_audit_logger().log_netboot_change(
+            mac=mac, enabled=True, client_ip=client_ip,
+        )
         return {
             "mac": record.mac,
             "netboot_enabled": record.netboot_enabled,
@@ -345,11 +361,15 @@ def get_netboot_status(mac: str) -> Dict[str, Any]:
 
 
 @app.get("/api/v1/autoinstall/{mac}")
-def get_autoinstall(mac: str) -> Response:
+def get_autoinstall(mac: str, request: Request) -> Response:
     if _engine is None:
         raise HTTPException(503, "engine not initialized")
+    client_ip = request.client.host if request.client else None
     try:
         content = _engine.get_autoinstall(mac)
+        get_audit_logger().log_autoinstall_fetch(
+            mac=mac, client_ip=client_ip,
+        )
         return Response(
             content=content, media_type="text/plain"
         )
@@ -415,7 +435,7 @@ def list_distros() -> List[Dict[str, str]]:
     status_code=201,
     dependencies=[Depends(require_role(Role.ADMIN))],
 )
-def register_host(rule: HostRuleRequest) -> Dict[str, Any]:
+def register_host(rule: HostRuleRequest, request: Request) -> Dict[str, Any]:
     if _config is None:
         raise HTTPException(503, "config not initialized")
 
@@ -483,6 +503,13 @@ def register_host(rule: HostRuleRequest) -> Dict[str, Any]:
     hosts_list.append(new_entry)
 
     _write_hosts_toml(hosts_file, hosts_list)
+
+    client_ip = request.client.host if request.client else None
+    get_audit_logger().log_host_rule_change(
+        action="created",
+        rule_data=new_entry,
+        client_ip=client_ip,
+    )
 
     return rule.model_dump()
 
@@ -597,7 +624,14 @@ def mark_provision_complete(mac: str) -> Dict[str, Any]:
         raise HTTPException(
             404, f"no provisioning record for {mac!r}"
         )
+    old_state = record.state.value
     _engine.tracker.transition(mac, ProvisionState.COMPLETE)
+    get_audit_logger().log_state_transition(
+        mac=mac,
+        old_state=old_state,
+        new_state=ProvisionState.COMPLETE.value,
+        profile=record.profile,
+    )
     return record.to_dict()
 
 
@@ -615,8 +649,16 @@ def mark_provision_failed(
         raise HTTPException(
             404, f"no provisioning record for {mac!r}"
         )
+    old_state = record.state.value
     _engine.tracker.transition(
         mac, ProvisionState.FAILED, error_message=body.error
+    )
+    get_audit_logger().log_state_transition(
+        mac=mac,
+        old_state=old_state,
+        new_state=ProvisionState.FAILED.value,
+        profile=record.profile,
+        error_message=body.error,
     )
     return record.to_dict()
 
@@ -630,6 +672,58 @@ def list_provisions() -> List[Dict[str, Any]]:
     if _engine is None:
         raise HTTPException(503, "engine not initialized")
     return [r.to_dict() for r in _engine.tracker.list_all()]
+
+
+# ---------------------------------------------------------------
+# Audit log query endpoint (issue #46)
+# ---------------------------------------------------------------
+
+
+class AuditEntryResponse(BaseModel):
+    timestamp: float
+    event_id: str
+    event_type: str
+    client_ip: Optional[str] = None
+    mac: Optional[str] = None
+    profile: Optional[str] = None
+    old_state: Optional[str] = None
+    new_state: Optional[str] = None
+    action: Optional[str] = None
+    key_name: Optional[str] = None
+    role: Optional[str] = None
+    reason: Optional[str] = None
+    error_message: Optional[str] = None
+    netboot_enabled: Optional[bool] = None
+    rule: Optional[Dict[str, Any]] = None
+    required_role: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+@app.get(
+    "/api/v1/audit",
+    response_model=List[AuditEntryResponse],
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def query_audit_log(
+    mac: Optional[str] = None,
+    event_type: Optional[str] = None,
+    since: Optional[float] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    """Query the audit log buffer.
+
+    Supports filtering by MAC address, event type, and timestamp.
+    Returns newest entries first.
+    """
+    audit = get_audit_logger()
+    return audit.query(
+        mac=mac,
+        event_type=event_type,
+        since=since,
+        limit=limit,
+    )
 
 
 # ---------------------------------------------------------------
@@ -1574,7 +1668,7 @@ def delete_cloud_image(name: str) -> Dict[str, str]:
     dependencies=[Depends(require_role(Role.ADMIN))],
 )
 def create_api_key(
-    req: ApiKeyCreateRequest,
+    req: ApiKeyCreateRequest, request: Request,
 ) -> Dict[str, Any]:
     store = get_key_store()
     if store is None:
@@ -1586,6 +1680,13 @@ def create_api_key(
             400, f"invalid role: {req.role!r}"
         )
     raw_key, api_key = store.create_key(req.name, role)
+    client_ip = request.client.host if request.client else None
+    get_audit_logger().log_api_key_change(
+        action="created",
+        key_name=req.name,
+        role=req.role,
+        client_ip=client_ip,
+    )
     return {
         "name": api_key.name,
         "role": api_key.role.value,
@@ -1618,7 +1719,7 @@ def list_api_keys() -> List[Dict[str, Any]]:
     "/api/v1/auth/keys/{name}",
     dependencies=[Depends(require_role(Role.ADMIN))],
 )
-def delete_api_key(name: str) -> Dict[str, str]:
+def delete_api_key(name: str, request: Request) -> Dict[str, str]:
     store = get_key_store()
     if store is None:
         raise HTTPException(503, "auth not initialized")
@@ -1626,6 +1727,12 @@ def delete_api_key(name: str) -> Dict[str, str]:
         raise HTTPException(
             404, f"API key {name!r} not found"
         )
+    client_ip = request.client.host if request.client else None
+    get_audit_logger().log_api_key_change(
+        action="deleted",
+        key_name=name,
+        client_ip=client_ip,
+    )
     return {"name": name, "status": "deleted"}
 
 
