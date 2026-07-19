@@ -1737,3 +1737,219 @@ def delete_mirror(name: str) -> Dict[str, str]:
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return {"name": name, "status": "deleted"}
+
+
+# ---------------------------------------------------------------
+# Cluster provisioning endpoints (issue #54)
+# ---------------------------------------------------------------
+
+
+class ClusterHostRequest(BaseModel):
+    hostname: str
+    mac: str
+    role: str = "worker"
+    profile: str = ""
+    extra: Dict[str, Any] = {}
+
+
+class ClusterCreateRequest(BaseModel):
+    name: str
+    hosts: List[ClusterHostRequest]
+    shared_config: Dict[str, Any] = {}
+    provisioning_order: List[str] = []
+    callbacks: List[str] = []
+
+
+class ClusterHostResponse(BaseModel):
+    hostname: str
+    mac: str
+    role: str = "worker"
+    profile: str = ""
+    extra: Dict[str, Any] = {}
+    state: str = "pending"
+    error_message: str = ""
+
+
+class ClusterResponse(BaseModel):
+    name: str
+    hosts: List[ClusterHostResponse]
+    shared_config: Dict[str, Any] = {}
+    provisioning_order: List[str] = []
+    state: str = "defined"
+    created_at: Optional[float] = None
+    updated_at: Optional[float] = None
+    callbacks: List[str] = []
+
+
+class ClusterStatusResponse(BaseModel):
+    name: str
+    state: str
+    total_hosts: int
+    hosts_by_state: Dict[str, int]
+    created_at: Optional[float] = None
+    updated_at: Optional[float] = None
+
+
+class ClusterHostMarkRequest(BaseModel):
+    error: str = ""
+
+
+_cluster_manager: Optional[Any] = None
+
+
+def _get_cluster_manager():
+    """Lazily build a ClusterManager."""
+    global _cluster_manager
+    if _cluster_manager is not None:
+        return _cluster_manager
+
+    from pxeos.cluster import ClusterManager, ClusterStore
+
+    if _config is None:
+        raise HTTPException(503, "config not initialized")
+
+    store = ClusterStore(_config.data_dir)
+    _cluster_manager = ClusterManager(store)
+    return _cluster_manager
+
+
+@app.post(
+    "/api/v1/clusters",
+    response_model=ClusterResponse,
+    status_code=201,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def create_cluster(req: ClusterCreateRequest) -> Dict[str, Any]:
+    """Create a new cluster definition."""
+    from pxeos.cluster import ClusterDefinition, ClusterHost
+
+    manager = _get_cluster_manager()
+    hosts = [
+        ClusterHost(
+            hostname=h.hostname,
+            mac=h.mac,
+            role=h.role,
+            profile=h.profile,
+            extra=h.extra,
+        )
+        for h in req.hosts
+    ]
+    definition = ClusterDefinition(
+        name=req.name,
+        hosts=hosts,
+        shared_config=req.shared_config,
+        provisioning_order=req.provisioning_order,
+        callbacks=req.callbacks,
+    )
+    try:
+        cluster = manager.create_cluster(definition)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return cluster.to_dict()
+
+
+@app.get(
+    "/api/v1/clusters",
+    response_model=List[ClusterResponse],
+    dependencies=[Depends(require_role(Role.VIEWER))],
+)
+def list_clusters() -> List[Dict[str, Any]]:
+    """List all cluster definitions."""
+    manager = _get_cluster_manager()
+    return [c.to_dict() for c in manager.list_clusters()]
+
+
+@app.get(
+    "/api/v1/clusters/{name}",
+    response_model=ClusterResponse,
+    dependencies=[Depends(require_role(Role.VIEWER))],
+)
+def get_cluster(name: str) -> Dict[str, Any]:
+    """Get a cluster definition by name."""
+    manager = _get_cluster_manager()
+    cluster = manager.get_cluster(name)
+    if cluster is None:
+        raise HTTPException(404, f"cluster {name!r} not found")
+    return cluster.to_dict()
+
+
+@app.get(
+    "/api/v1/clusters/{name}/status",
+    response_model=ClusterStatusResponse,
+    dependencies=[Depends(require_role(Role.VIEWER))],
+)
+def get_cluster_status(name: str) -> Dict[str, Any]:
+    """Get the provisioning status of a cluster."""
+    manager = _get_cluster_manager()
+    status = manager.get_cluster_status(name)
+    if status is None:
+        raise HTTPException(404, f"cluster {name!r} not found")
+    return status
+
+
+@app.post(
+    "/api/v1/clusters/{name}/provision",
+    response_model=ClusterResponse,
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
+def provision_cluster(name: str) -> Dict[str, Any]:
+    """Start the provisioning workflow for a cluster."""
+    manager = _get_cluster_manager()
+    try:
+        cluster = manager.start_provisioning(name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return cluster.to_dict()
+
+
+@app.post(
+    "/api/v1/clusters/{name}/hosts/{mac}/complete",
+    response_model=ClusterResponse,
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
+def mark_cluster_host_complete(name: str, mac: str) -> Dict[str, Any]:
+    """Mark a host in the cluster as provisioning complete."""
+    manager = _get_cluster_manager()
+    try:
+        cluster = manager.mark_host_complete(name, mac)
+    except ValueError as exc:
+        raise HTTPException(
+            404 if "not found" in str(exc) else 400, str(exc)
+        )
+    return cluster.to_dict()
+
+
+@app.post(
+    "/api/v1/clusters/{name}/hosts/{mac}/failed",
+    response_model=ClusterResponse,
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
+def mark_cluster_host_failed(
+    name: str, mac: str, body: ClusterHostMarkRequest,
+) -> Dict[str, Any]:
+    """Mark a host in the cluster as provisioning failed."""
+    manager = _get_cluster_manager()
+    try:
+        cluster = manager.mark_host_failed(name, mac, body.error)
+    except ValueError as exc:
+        raise HTTPException(
+            404 if "not found" in str(exc) else 400, str(exc)
+        )
+    return cluster.to_dict()
+
+
+@app.delete(
+    "/api/v1/clusters/{name}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def delete_cluster(name: str) -> Dict[str, str]:
+    """Delete a cluster definition."""
+    manager = _get_cluster_manager()
+    try:
+        if not manager.delete_cluster(name):
+            raise HTTPException(
+                404, f"cluster {name!r} not found"
+            )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"name": name, "status": "deleted"}
