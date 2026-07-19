@@ -229,7 +229,7 @@ parallel = true
 concurrency = ["thread", "multiprocessing"]
 
 [tool.coverage.report]
-fail_under = 40
+fail_under = 75
 precision = 2
 show_missing = true
 skip_covered = false
@@ -269,7 +269,7 @@ addopts = [
     "--cov-report=term-missing:skip-covered",
     "--cov-report=html",
     "--cov-branch",
-    "--cov-fail-under=50",
+    "--cov-fail-under=75",
     "--maxfail=3",
 ]
 markers = [

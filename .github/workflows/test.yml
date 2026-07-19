@@ -41,7 +41,7 @@ jobs:
           --cov-report=term-missing:skip-covered
           --cov-report=html
           --cov-branch
-          --cov-fail-under=50
+          --cov-fail-under=75
           -v
 
       - name: Upload coverage report
